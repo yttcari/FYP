@@ -45,7 +45,7 @@ class WhiteDwarf:
             t3 = 1 / (1 - (2 * m * self.Ye * me / mp)/rb)
 
         dPdr = -t0 * t1 * t2 * t3
-        print(t1, t2, t3)
+        #print(t1, t2, t3)
 
         drhodr = dPdr / gamma
 
