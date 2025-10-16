@@ -1,3 +1,7 @@
+"""
+CGS Unit is used.
+"""
+
 import numpy as np
 
 # General Constant
@@ -5,12 +9,14 @@ me = 9.1093837e-31 * 1000 # g
 mp = 1.67262192e-27 * 1000 # g
 c = 299792458 * 100 # cm/s
 G = 6.67430e-8 # cgs
-C_e = 1.60217663e-19 # charge in e- in C
-E_e = me * (c ** 2) / 1.60217663e-19 # m_e c^2 in eV
+C_e = 1.60217663e-12 # charge in e- in erg/ev
+E_e = me * (c ** 2) / C_e # m_e c^2 in eV
 r_e =  2.8179403205e-15 * 100 # electron radius in cm
 r_p = 0.877e-15 * 100 # proton radius in cm
-pion_photon = 135e6 / 2 * C_e * 1e-7 # erg
-positron_photon = 0.511e6 * C_e * 1e-7 # erg
+pion_photon = 135e6 / 2 * C_e # erg
+positron_photon = 0.511e6 * C_e # erg
+proton_energy = 938.272e6 * C_e  # erg
+M_SOLAR = 1.98e33 # g
 
 # Coefficients in Calculating gamma ray cross section
 row_0 = [

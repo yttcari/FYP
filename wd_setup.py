@@ -19,7 +19,7 @@ class WhiteDwarf:
 
     def __repr__(self):
         if hasattr(self,'mass') and hasattr(self, 'radius'):
-            return f"Ye: {self.Ye}, k: {self.k} s-1, Core density: {self.rhobar2rho(self.rhoc_scaled):.3e} g/cc, Mass: {self.mbar2m(self.mass):.3f} Msolar, Radius: {self.rbar2r(self.radius):.3} km"
+            return f"Ye: {self.Ye}, k: {self.k} s-1, Core density: {self.rhobar2rho(self.rhoc_scaled):.3e} g/cc, Mass: {self.mbar2m(self.mass):.3f} Msolar, Radius: {self.rbar2r(self.radius):.3f} km"
         else:
             return rf"Ye: {self.Ye}, k: {self.k} s-1, Core density: {self.rhobar2rho(self.rhoc_scaled):.3e} g/cc"
     
@@ -28,18 +28,19 @@ class WhiteDwarf:
     
     def _x(self, rhob):
         return (rhob) ** (1/3)
-
-    def get_derivative(self, state, rb): 
-        # state = [rho, m]
-        rho, m = np.maximum(state[0], np.finfo(np.float32).eps), np.maximum(state[1], np.finfo(np.float32).eps)
-
-        x = self._x(rho)
-        gamma = self._gamma(x)
-
+    
+    def get_pressure(self, x):
         P = self.Ye * me * (x * np.sqrt(x ** 2 + 1) * (2 * x ** 2 -3) + 3 * np.arctanh(x / np.sqrt(x ** 2 + 1))) / (8 * mp)
+        return P
+    
+    def get_proton_pressure(self, rb, m, rho):
+        # all dimensionless
+        n_p = self.Ye * rho * self.rho0 / mp # proton density, unit = cm-^3, Yp=Ye
+        proton_pressure = self.p_decay.photon_pressure(E_gamma=proton_energy, r=rb*self.R0, m=m*self.M0, n=n_p) * self.R0 / self.rho0 
 
-        dmdr = rb**2 * rho 
-
+        return proton_pressure
+    
+    def TOV(self, rb, rho, P, m):
         if rb <= 1e-6:
             #m = (1/3) * rho * (rb**3)
             t0 = rb * rho ** 2 / 3
@@ -52,20 +53,32 @@ class WhiteDwarf:
             t2 = (1 + (rb**3 * P)/m)
             t3 = 1 / (1 - (2 * m * self.Ye * me / mp)/rb)
 
-        # consider effect of proton decay
-        n_p = self.Ye * rho * self.rho0 / mp # proton density, unit = cm-^3, Yp=Ye
+        return -t0 * t1 * t2 * t3
+
+    def get_derivative(self, state, rb): 
+        # state = [rho, m]
+        rho, m = np.maximum(state[0], np.finfo(np.float32).eps), np.maximum(state[1], np.finfo(np.float32).eps)
+        
+        x = self._x(rho)
+        gamma = self._gamma(x)
+        P = self.get_pressure(x=x)
+
+        dmdr = rb**2 * rho 
+
+        TOV_term = self.TOV(rb=rb, rho=rho, P=P, m=m)
+        proton_pressure = self.get_proton_pressure(rb, m, rho)
         #pion_photon_pressure = self.p_decay.photon_pressure(E_gamma=pion_photon, r=rb*self.R0, m=m*self.M0, n=n_p) * self.R0 / self.rho0
         #positron_photon_pressure =  self.p_decay.photon_pressure(E_gamma=positron_photon, r=rb*self.R0, m=m*self.M0, n=n_p) * self.R0 / self.rho0 
-        proton_pressure = self.p_decay.photon_pressure(E_gamma=proton_energy, r=rb*self.R0, m=m*self.M0, n=n_p) * self.R0 / self.rho0 
+        
         #dPdr = -t0 * t1 * t2 * t3 - pion_photon_pressure * 2 - positron_photon_pressure * 2
-        dPdr = -t0 * t1 * t2 * t3 - proton_pressure 
+        dPdr = TOV_term - proton_pressure 
         #print(-t0*t1*t2*t3, pion_photon_pressure, positron_photon_pressure)
 
         #drhodr_pdecay = self.p_decay.drhodr(n_p=n_p) 
         drhodr = dPdr / gamma 
 
         #return np.array([drhodr, dmdr]), [t1, t2, t3, P, pion_photon_pressure * 2 + positron_photon_pressure * 2]
-        return np.array([drhodr, dmdr]), [t0*t1*t2*t3, proton_pressure]
+        return np.array([drhodr, dmdr]), [TOV_term, proton_pressure]
     
     def integrate(self, DEBUG=False):
         # Initial conditions
@@ -77,7 +90,7 @@ class WhiteDwarf:
         rho_history = []
 
         while state[0] > 0:
-            dr = 1e-3 * r
+            dr = 1e-5
 
             R_history.append(r)
             rho_history.append(state[0])

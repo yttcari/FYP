@@ -10,40 +10,37 @@ class decay:
     def gr_sigma(self, E_gamma):
         # Calculating cross section of Gamma ray
         # Using Fornalski Equation
-        # E_gamma: gamma ray photon energy in eV
+        # E_gamma: gamma ray photon energy in erg
         sigma = 0
-
-        E_ratio = E_gamma / E_e 
-        
+        E_ratio = E_gamma / (E_e * C_e)
         for i in range(6):
             sum = 0
             for j in range(4):
                 sum += a_ij[j][i] * (self.Z ** j)
 
             sigma += (np.log(E_ratio) ** i) * sum
-
-        return sigma
+        return sigma * 1e-24
     
     def luminosity(self, E_gamma, m):
-        # E_gamma in j
-        return 4 * np.pi * self.Ye * m * self.k * E_gamma/ mp # unit: erg/s
+        """
+        m: enclosed mass in g
+        k: decay constant in 1/s
+        E_gamma: gamma ray energy in erg
+        mp: proton mass in g
+        """
+        return self.Ye * m * self.k * E_gamma/ mp # unit: erg/s
 
-    def _photon_pressure(self, E_gamma, r, m, n, r_spec):
+    def photon_pressure(self, E_gamma, r, m, n):
         # n = np = ne, but with dimension
         # but Ye = Yp since no of proton = electron in atom
         # return dpdr by species
-        # r_spec is radius of proton or electron depends on the input
         
-        sigma = np.pi * r_spec ** 2
+        sigma = self.gr_sigma(E_gamma=E_gamma) 
         L = self.luminosity(E_gamma, m) # erg /s
-        l = 1 / (np.sqrt(2) * sigma * n) # unit = cm
+        l = 1 / (sigma * n) # unit = cm
 
         dudr = 3 * L / (4 * np.pi * r ** 2 * l * c) # erg cm^-4 s^-1
-
-        return dudr / 3
-    
-    def photon_pressure(self, E_gamma, r, m, n):
-        return self._photon_pressure(E_gamma, r, m, n, r_p) + self._photon_pressure(E_gamma, r, m, n, r_e)
+        return -dudr/3
     
     def drhodr(self, n_p):
         # positron annhilation doesn't change the density
