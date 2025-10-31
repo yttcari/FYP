@@ -1,10 +1,5 @@
-"""
-CGS Unit is used.
-"""
+import numpy as np 
 
-import numpy as np
-
-# General Constant
 me = 9.1093837e-31 * 1000 # g
 mp = 1.67262192e-27 * 1000 # g
 c = 299792458 * 100 # cm/s
@@ -17,6 +12,8 @@ pion_photon = 135e6 / 2 * C_e # erg
 positron_photon = 0.511e6 * C_e # erg
 proton_energy = 938.272e6 * C_e  # erg
 M_SOLAR = 1.98e33 # g
+c = 3e8 * 100 # light speed in cm/s
+hbar = 1.0546e-27 # reduced planck constant in cgs unit
 
 # Coefficients in Calculating gamma ray cross section
 row_0 = [
