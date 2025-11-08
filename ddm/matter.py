@@ -17,12 +17,12 @@ class Matter:
 class DarkMatter(Matter):
     """Equation of state for a single component"""
     def __init__(self, 
-                 m, # mass of the dark matter [MeV]
+                 m, # mass of the dark matter [GeV]
                  k=None, # decay constant [s-1]
-                 dE=None, # Gamma ray emitted by the decaying dark matter [MeV]
+                 dE=None, # Gamma ray emitted by the decaying dark matter [GeV]
                  Z=None # atmoic number of the white dwarf
                  ):
-        self.m = m * 1e6 * C_e # mass of the dark matter particle [g]
+        self.m = m * 1e9 * C_e / (c ** 2) # mass of the dark matter particle [g]
         super().__init__()
 
         if k is not None and dE is not None:
@@ -56,7 +56,7 @@ class DarkMatter(Matter):
                 sum += a_ij[j][i] * (self.Z ** j)
 
             sigma += (np.log(E_ratio) ** i) * sum
-        return sigma * 1e-24
+        return sigma * 1e-24 # barn to cm^2
     
     def luminosity(self, m):
         """
@@ -66,21 +66,24 @@ class DarkMatter(Matter):
         L = self.k * self.dE * m / self.m # unit: erg/s
         return L
 
-    def photon_pressure(self, r, m, n):
+    def photon_pressure(self, r, m, ne, nn):
         # return dpdr by due to the decay dm
         """
         r: radius [cm]
         m: enclosed mass [g]
-        n: number density of the nucleon
+        ne: number density of the electron
+        nn: number density of the nucleon
         """
         if not self.decay:
             raise ValueError("This is not a decaying dark matter. STOP")
         
-        sigma = self.gr_sigma() 
-        L = self.luminosity(m) # erg /s
-        l = 1 / (sigma * n) # unit = cm
+        sigma_gr_e = self.gr_sigma()
+        sigma_n = np.pi * (0.877 * 1e-13) ** 2
+        nsigma = sigma_gr_e * ne + sigma_n * nn
+        L = self.luminosity(m) # erg/s
+        l = 1 / nsigma # unit = cm
 
-        dudr = 3 * L / (4 * np.pi * r ** 2 * l * c) # erg cm^-4 s^-1
+        dudr = 3 * L / (4 * np.pi * r ** 2 * l * c) # (erg cm^-3) / cm
         return -dudr/3
     
 class NormalMatter(Matter):

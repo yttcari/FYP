@@ -12,8 +12,8 @@ class WhiteDwarf:
                  ddm_rhoc=None, # core density of daughter dark matter [g/cc]
                  k=None, # decay constant of parent dark matter [s-1]
                  Z=None, # atomic number of normal matter 
-                 pdm_m=None, # mass of parent dark matter particle [MeV]
-                 ddm_m=None # mass of daughter dark matter particle [MeV]
+                 pdm_m=None, # mass of parent dark matter particle [GeV]
+                 ddm_m=None, # mass of daughter dark matter particle [GeV]
                  ):
         self.Ye = Ye
         self.nm = NormalMatter(self.Ye)
@@ -88,7 +88,7 @@ class WhiteDwarf:
             pdm_TOV = self.TOV(rb, rho=pdm_rho, P=pdm_P, m=pdm_M, total_m=total_M, total_P=total_P, total_rho=total_rho)
             ddm_TOV = self.TOV(rb, rho=ddm_rho, P=ddm_P, m=ddm_M, total_m=total_M, total_P=total_P, total_rho=total_rho)
 
-            nucleon_photon_pressure = self.pdm.photon_pressure(r=rb*self.R0, m=pdm_M*self.M0, n=nm_rho*self.rho0*self.Ye/mp) * self.R0 / self.rho0
+            nucleon_photon_pressure = self.pdm.photon_pressure(r=rb*self.R0, m=pdm_M*self.M0, ne=nm_rho*self.rho0*self.Ye/mp, nn=nm_rho*self.rho0/mp) * self.R0 / self.rho0
 
             nm_drhodr = (nm_TOV - nucleon_photon_pressure) / self.nm.gamma(nm_rho)
             pdm_drhodr = pdm_TOV / max(self.pdm.gamma(pdm_rho), np.finfo(np.float32).eps)
