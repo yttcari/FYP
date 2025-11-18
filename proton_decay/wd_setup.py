@@ -10,6 +10,7 @@ class WhiteDwarf:
         self.rhoc_scaled = rhoc_scaled
         self.p_decay = decay(k=k, Z=Z, Ye=Ye)
         self.k = k
+        self.Z = Z
 
         # scale
         self.rho0 = 9.79e5 / Ye

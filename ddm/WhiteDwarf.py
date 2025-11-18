@@ -64,11 +64,11 @@ class WhiteDwarf:
     def get_derivative(self, state, rb):
         if self.decay_dm:
             # extract state vector variable
-            nm_rho = max(state[0], np.finfo(np.float32).eps)
-            pdm_rho = max(state[1],0)
+            nm_rho = max(state[0], 0)
+            pdm_rho = max(state[1], 0)
             ddm_rho = max(state[2], 0)
 
-            nm_M = max(state[3], np.finfo(np.float32).eps)
+            nm_M = max(state[3], 0)
             pdm_M = max(state[4], 0)
             ddm_M = max(state[5], 0)
 
@@ -90,7 +90,7 @@ class WhiteDwarf:
 
             nucleon_photon_pressure = self.pdm.photon_pressure(r=rb*self.R0, m=pdm_M*self.M0, ne=nm_rho*self.rho0*self.Ye/mp, nn=nm_rho*self.rho0/mp) * self.R0 / self.rho0
 
-            nm_drhodr = (nm_TOV - nucleon_photon_pressure) / self.nm.gamma(nm_rho)
+            nm_drhodr = (nm_TOV - nucleon_photon_pressure) / max(self.nm.gamma(nm_rho), np.finfo(np.float32).eps)
             pdm_drhodr = pdm_TOV / max(self.pdm.gamma(pdm_rho), np.finfo(np.float32).eps)
             ddm_drhodr = ddm_TOV / max(self.ddm.gamma(ddm_rho), np.finfo(np.float32).eps)
 
@@ -122,11 +122,13 @@ class WhiteDwarf:
             state = np.array([self.nm_rhoc, # dimensionless normal matter density
                      (1/3) * self.nm_rhoc * (rb ** 3), # dimensionless normal matter mass
                      ])
+            
         history = []
 
         while state[0] > 1e-10:
-            dr = 1e-3 * rb
+            dr = 5e-4 * rb
             history.append(np.array([rb] + list(state)))
+            print(state)
             if verbose:
                 print(f"radius (km): {self.rbar2r(rb):.3e}, rho (g/cc): {self.rhobar2rho(state[0]):.3e}, mass [Msolar]: {self.mbar2m(state[3]):.3e}")
             state = rk4(self.get_derivative, dr=dr, rb=rb, state=state)
