@@ -6,20 +6,6 @@ class decay:
         self.k = k # s-1
         self.Z = Z # atomic number
         self.Ye = Ye # electron fraction
-
-    def gr_sigma(self, E_gamma):
-        # Calculating cross section of Gamma ray
-        # Using Fornalski Equation
-        # E_gamma: gamma ray photon energy in erg
-        sigma = 0
-        E_ratio = E_gamma / (E_e * C_e)
-        for i in range(7):
-            sum = 0
-            for j in range(5):
-                sum += a_ij[j][i] * (self.Z ** j)
-
-            sigma += (np.log(E_ratio) ** i) * sum
-        return sigma * 1e-24 # cm^2
     
     def luminosity(self, E_gamma, m):
         """
@@ -31,44 +17,54 @@ class decay:
         L = m * self.k * E_gamma/ mp # unit: erg/s
         return L
 
-    def photon_pressure(self, E_gamma, r, m, ne, nn):
+    def mean_free_path(self, T, rho):
+        # ======= Assumed Carbon, Z=6, A=12, all cgs ===========
+        Z = 6
+        A = 12
+        Ye = Z / A
+        opacity = (56 / (15 * np.sqrt(3))) * (statC_e ** 6 / (c * h * kB ** 2)) * (Z**2 / (mH * A)) / (T ** 2)
+        lambda_R = (20 * np.sqrt(3) / 14) * ((c * h * sigma * (kB ** 2) * mH / statC_e**6) * (A / (Z ** 2)) * ((T ** 5 / rho)))
+        a0 = 5.55e-2 * (rho ** (1/3))
+        I1 = 2 * np.pi * np.log(1 + a0 ** 2)
+        mu = mp / (mH * Ye)
+    
+        lambda_T = (np.pi/8) * ((h**3 * kB ** 2) / (statC_e ** 4 * me ** 2 * mH)) / (mu * Z) * (T * rho / I1)
+        kappa_eff = opacity / (1 + lambda_T / lambda_R)
+
+        return 1 / (kappa_eff * rho) # cm
+
+    def dTdr(self, r, T, m, rho):
+        # r: radius of white dwarf [cm]
+        # T: temperature at current r [K]
+        # rho: density [g/cc]
+        # m: enclosed mass of white dwarf [g]
+
+        L = self.luminosity(E_gamma=proton_energy, m=m)
+        l = self.mean_free_path(T, rho)
+
+        return - L / (c * l) # cgs unit
+
+    def photon_pressure(self, E_gamma, r, m, ne, nn, T, rho):
         """
         r: radius [cm]
         m: mass [g]
         ne: electron number density
         nn: nucleon number density
         E_gamma: gamma ray energy [erg]
+        T: temperature [K]
+        rho: density [g/cc]
+
+        return dPdr from proton decay photon pressure
         """
         # n = np = ne, but with dimension
         # but Ye = Yp since no of proton = electron in atom
         # return dpdr by species
         
-        sigma_gr_e = self.gr_sigma(E_gamma=E_gamma)
-        sigma_n = np.pi * (0.877 * 1e-13) ** 2
-        nsigma = sigma_gr_e * ne + sigma_n * nn
         L = self.luminosity(E_gamma, m) # erg /s
-        l = 1 / nsigma # unit = cm
-        print(f"l: {l:.3e} cm, r: {r/(1000 * 100):.3e} km")
+        #l = 1 / nsigma # unit = cm
+        l = self.mean_free_path(T, rho)
+        #print(f"{l:.3e}, {oldl:.3e}")
+        #print(f"l: {l:.3e} cm, r: {r/(1000 * 100):.3e} km")
 
         dudr = 3 * L / (4 * np.pi * r ** 2 * l * c) # erg cm^-4 s^-1
         return -dudr/3
-    
-    def dTdr(self, L, E_gamma, r, ne, nn, T):
-        """
-        r: radius [cm]
-        m: mass [g]
-        ne: electron number density
-        nn: nucleon number density
-        E_gamma: gamma ray energy [erg]
-        """
-        # n = np = ne, but with dimension
-        # but Ye = Yp since no of proton = electron in atom
-        # return dpdr by species
-        
-        sigma_gr_e = self.gr_sigma(E_gamma=E_gamma)
-        sigma_n = np.pi * (0.877 * 1e-13) ** 2
-        nsigma = sigma_gr_e * ne + sigma_n * nn
-        l = 1 / nsigma # unit = cm
-
-        dTdr = -3 * L / (16 * np.pi * r ** 2 * l * c * 5.67e-5 * (T ** 3)) # erg cm^-4 s^-1
-        return dTdr
