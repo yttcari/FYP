@@ -42,7 +42,7 @@ class decay:
         L = self.luminosity(E_gamma=proton_energy, m=m)
         l = self.mean_free_path(T, rho)
 
-        return - L / (c * l) # cgs unit
+        return - 3 * L / (64 * np.pi * (r ** 2) * l * (T ** 3) * sigma)
 
     def photon_pressure(self, E_gamma, r, m, ne, nn, T, rho):
         """
@@ -66,5 +66,5 @@ class decay:
         #print(f"{l:.3e}, {oldl:.3e}")
         #print(f"l: {l:.3e} cm, r: {r/(1000 * 100):.3e} km")
 
-        dudr = 3 * L / (4 * np.pi * r ** 2 * l * c) # erg cm^-4 s^-1
+        dudr = 3 * L / (4 * np.pi * l * c) # erg cm^-4 s^-1
         return -dudr/3

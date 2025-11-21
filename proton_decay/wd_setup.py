@@ -5,14 +5,15 @@ from rk4 import rk4
 import matplotlib.pyplot as plt
 
 class WhiteDwarf:
-    def __init__(self, Ye, rhoc_scaled, Z, k, T0):
+    def __init__(self, Ye, rhoc_scaled, Z, k, T0, P0):
         self.Ye = Ye
         self.rhoc_scaled = rhoc_scaled # dimensionless
         self.p_decay = decay(k=k, Z=Z, Ye=Ye)
         self.k = k
         self.Z = Z
         self.T0 = T0 # K
-
+        self.P0 = P0 # dimensionless
+ 
         # scale
         self.rho0 = 9.79e5 / Ye
         self.R0 = 7.72e8 * Ye
@@ -55,37 +56,37 @@ class WhiteDwarf:
 
     def get_derivative(self, state, rb): 
         # state = [rho, m, T]
-        rho, m, T = max(state[0], np.finfo(np.float32).eps), max(state[1], np.finfo(np.float32).eps), max(state[2], np.finfo(np.float32).eps)
+        rho, m, T, P_photon = max(state[0], np.finfo(np.float32).eps), max(state[1], np.finfo(np.float32).eps), max(state[2], np.finfo(np.float32).eps), max(state[3], np.finfo(np.float32).eps)
         
         x = self._x(rho)
         gamma = self._gamma(x)
-        P = max(self.get_pressure(x=x), 0)
+        P = max(self.get_pressure(x=x), 0) + P_photon
 
         dmdr = rb**2 * max(rho, 0) 
 
         TOV_term = self.TOV(rb=rb, rho=rho, P=P, m=m)
-        proton_pressure = self.get_proton_pressure(rb, m, rho, T)
+        proton_pressure = self.get_proton_pressure(rb, m, rho, T) # proton_pressure < 0
         dPdr = TOV_term - proton_pressure 
         dTdr = self.p_decay.dTdr(r=rb*self.R0, T=T, m=m*self.M0, rho=rho*self.rho0)
 
         drhodr = dPdr / max(gamma, np.finfo(np.float32).eps) 
 
         #return np.array([drhodr, dmdr]), [t1, t2, t3, P, pion_photon_pressure * 2 + positron_photon_pressure * 2]
-        return np.array([drhodr, dmdr, dTdr]), np.array([TOV_term, proton_pressure, dTdr, self.p_decay.luminosity(E_gamma=proton_energy, m=m*self.M0), self.p_decay.mean_free_path(T, rho*self.rho0)])
+        return np.array([drhodr, dmdr, dTdr, proton_pressure]), np.array([TOV_term, proton_pressure, dTdr, self.p_decay.luminosity(E_gamma=proton_energy, m=m*self.M0), self.p_decay.mean_free_path(T, rho*self.rho0)])
     
     def integrate(self, DEBUG=False):
         # Initial conditions
         r = 1e-4    
-        state = np.array([self.rhoc_scaled, (1/3) * self.rhoc_scaled * (r ** 3), self.T0]) # [density, mass, temperature]
-
+        state = np.array([self.rhoc_scaled, (1/3) * self.rhoc_scaled * (r ** 3), self.T0, self.P0]) # [density, mass, temperature]
+        print(state)
         R_history = []
         M_history = []
         rho_history = []
         T_history = []
         debug_history = []
         luminosity = []
-
-        while state[0] > 0:
+        P_photon_history = []
+        while state[0] > 1e-3:
             dr = 1e-4
 
             R_history.append(r)
@@ -95,16 +96,19 @@ class WhiteDwarf:
             
             deri, debug = self.get_derivative(rb=r, state=state)
             debug_history.append(debug)
-
-            luminosity.append(self.p_decay.luminosity(E_gamma=proton_energy, m=state[1] * self.M0))
+            luminosity.append(debug[-2])#self.p_decay.luminosity(E_gamma=proton_energy, m=state[1] * self.M0))
+            P_photon_history.append(state[3])
 
             state = rk4(self.get_derivative, dr=dr, rb=r, state=state)
             if state[0] < 0:
                 print("WARNING: negative density")
+                break
             if state[1] < 0:
                 print("WARNING: negative pressure")
+                state[1] = 0
             if state[2] < 0:
                 print("WARNING: negative temperature")
+                state[2] = 0
 
             if DEBUG:
                 print(f"dr (km): {self.rbar2r(dr):.3e} | Radius (km) {self.rbar2r(r):.3e} | Density (g/cc): {self.rhobar2rho(state[0]):.3e} | Mass (☉): {self.mbar2m(state[1]):.3e} | TOV: {debug[0]:.3e} | Proton Pressure: {debug[1]:.3e} | drhodr: {deri[0]:.3e} |  l (cm): {debug[-1]:.3e} | dTdr: {deri[2]:.3e}")
@@ -116,6 +120,7 @@ class WhiteDwarf:
         self.rho_profile = np.array(rho_history)
         self.T_profile = np.array(T_history)
         self.debug_history = np.array(debug_history)
+        self.P_photon_history = np.array(P_photon_history)
 
         self.mass = M_history[-1]
         self.radius = R_history[-1]
@@ -170,7 +175,7 @@ class WhiteDwarf:
     def mbar2m(self, mbar):
         return mbar * self.M0 / M_SOLAR
 
-    def back_integrate(self):
+    def back_integrate(self, DEBUG=False):
         """
         Integrate inwards from surface to center.
         r_start: radius of white dwarf in dimensionless form
@@ -183,17 +188,17 @@ class WhiteDwarf:
         r_start = self.R_profile[-1]
         m_start = self.M_profile[-1]
         rho_start = self.rho_profile[-1]
+        P_photon_start = 0
         
         Teff = L_start / (4 * np.pi * sigma * (r_start * self.R0) ** 2)
 
         # [density, mass, temperature]
-        state = np.array([rho_start, m_start, Teff]) 
-        print(state)
+        state = np.array([rho_start, m_start, Teff, P_photon_start]) 
         
         r = r_start
         
         # Arrays to store history
-        R_hist, M_hist, rho_hist, T_hist = [], [], [], []
+        R_hist, M_hist, rho_hist, T_hist, P_photon_hist = [], [], [], [], []
         
         # Integration loop (Inward -> dr is negative)
         dr = -1e-4
@@ -205,9 +210,14 @@ class WhiteDwarf:
             rho_hist.append(state[0])
             M_hist.append(state[1])
             T_hist.append(state[2])
+            P_photon_hist.append(state[3])
+
+            deri, debug = self.get_derivative(rb=r, state=state)
             
             # Use same derivatives, but dr is negative
             state = rk4(self.get_derivative, dr=dr, rb=r, state=state)
+            if DEBUG:
+                print(f"dr (km): {self.rbar2r(dr):.3e} | Radius (km) {self.rbar2r(r):.3e} | Density (g/cc): {self.rhobar2rho(state[0]):.3e} | Mass (☉): {self.mbar2m(state[1]):.3e} | TOV: {debug[0]:.3e} | Proton Pressure: {debug[1]:.3e} | drhodr: {deri[0]:.3e} |  l (cm): {debug[-1]:.3e} | dTdr: {deri[2]:.3e}")
             
             r += dr
             
@@ -216,8 +226,5 @@ class WhiteDwarf:
         self.M_profile = np.array(M_hist)
         self.rho_profile = np.array(rho_hist)
         self.T_profile = np.array(T_hist)
-        
-        #central_rho = self.rhobar2rho(state[0])
-        #central_T = state[2]
-        
-        return state[0], state[2]
+        # Ye, rhoc_scaled, Z, k, T0, P0)
+        return self.Ye, state[0], self.Z, self.k, state[2], state[3]
