@@ -23,6 +23,7 @@ h = 6.626e-27 # planck constant in cgs
 mH = 1.6735e-24 # mass of hydrogen in g
 kB = 1.38e-16 # boltzmann constant in cgs
 sigma = 5.67e-5 # stefann constant
+a = 4 * sigma / (3 * c)
 
 # Coefficients in Calculating gamma ray cross section
 row_0 = [

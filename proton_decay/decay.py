@@ -66,5 +66,5 @@ class decay:
         #print(f"{l:.3e}, {oldl:.3e}")
         #print(f"l: {l:.3e} cm, r: {r/(1000 * 100):.3e} km")
 
-        dudr = 3 * L / (4 * np.pi * l * c) # erg cm^-4 s^-1
+        dudr = 3 * L / (4 * np.pi * l * c * (r ** 2)) # erg cm^-4 s^-1
         return -dudr/3
