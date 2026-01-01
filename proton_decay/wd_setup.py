@@ -38,8 +38,15 @@ class WhiteDwarf:
         return (rhob) ** (1/3)
     
     def get_pressure(self, x):
-        P = self.Ye * me * (x * np.sqrt(x ** 2 + 1) * (2 * x ** 2 -3) + 3 * np.arctanh(x / np.sqrt(x ** 2 + 1))) / (8 * mp)
+        P = self.Ye * me * (x * np.sqrt(x ** 2 + 1) * (2 * x ** 2 -3) + 3 * np.sinh(x)) / (8 * mp)
         return P
+    
+    def get_thermal_pressure(self, x, T):
+        f = (x * np.sqrt(x ** 2 + 1) * (2 * x ** 2 -3) + 3 * np.sinh(x)) 
+
+        P = self.get_pressure(x)
+
+        return P * (4 * np.pi ** 2 * (kB * T / (me * c ** 2)) ** 2 * (x * np.sqrt(x**2 + 1)) / (f))
     
     def get_proton_pressure(self, rb, m, rho, T):
         # all dimensionless
@@ -52,12 +59,12 @@ class WhiteDwarf:
         if rb <= 1e-6:
             m = (1/3) * rho * (rb**3)
         
-        t0 = (m * rho / rb**2)
+        #t0 = (m * rho / rb**2)
         t1 = (1 + P/rho)
         t2 = (1 + (rb**3 * P)/m)
         t3 = 1 / (1 - (2 * m * self.Ye * me / mp)/rb)
 
-        return -t0 * t1 * t2 * t3
+        return t1 * t2 * t3
 
     def get_hydro_deri(self, state, rb): 
         # state = [rho, m, P_photon]
@@ -65,27 +72,39 @@ class WhiteDwarf:
         
         x = self._x(rho)
         gamma = self._gamma(x)
-        P = max(self.get_pressure(x=x), 0) + P_photon
-        T = (P_photon * (self.rho0) / (4 * sigma / (3 * c))) ** 0.25
+        P_deg = max(self.get_pressure(x=x), 0)
+        T = (P_photon * (self.rho0) / a) ** 0.25
+        #P_ther = self.get_thermal_pressure(x, T)
+
+        P = P_deg + P_photon
 
         dmdr = rb**2 * max(rho, 0) 
 
         TOV_term = self.TOV(rb=rb, rho=rho, P=P, m=m)
-        proton_pressure = self.get_proton_pressure(rb, m, rho, T) # proton_pressure < 0
-        dPdr = TOV_term - proton_pressure 
+        #proton_pressure = self.get_proton_pressure(rb, m, rho, T) # proton_pressure < 0
+        if hasattr(self, 'dPdr_photon_profile'):
+            try:
+                dPdr_photon = self.dPdr_photon_profile[np.searchsorted(self.R_profile, rb)]
+            except:
+                dPdr_photon = 0
+        else:
+            dPdr_photon = 0
+
+        dPdr_G = - (m * rho / rb**2) * TOV_term
+        dPdr = dPdr_G - dPdr_photon
         
         drhodr = dPdr / gamma
 
         #return np.array([drhodr, dmdr]), [t1, t2, t3, P, pion_photon_pressure * 2 + positron_photon_pressure * 2]
-        return np.array([drhodr, dmdr, 0]), np.array([TOV_term, P_photon, P, self.get_pressure(x=x), P_photon, dPdr])
+        return np.array([drhodr, dmdr, 0]), np.array([dPdr_G, dPdr_photon, P, P_deg, P_photon ,dPdr])
     
     def get_thermo_deri(self, state, rb):
         rho, m, P_photon = max(state[0], np.finfo(np.float32).eps), max(state[1], np.finfo(np.float32).eps), max(state[2], np.finfo(np.float32).eps)
         T = (P_photon * (self.rho0) / (4 * sigma / (3 * c))) ** 0.25
         proton_pressure = self.get_proton_pressure(rb, m, rho, T) # proton_pressure < 0
-        dTdr = self.p_decay.dTdr(rb*self.R0, T, m*self.M0, rho*self.rho0) * self.R0
-
-        return np.array([0, 0, proton_pressure]), None
+        #dTdr = self.p_decay.dTdr(rb*self.R0, T, m*self.M0, rho*self.rho0) * self.R0
+        hydro_deri = self.get_hydro_deri(state=state, rb=rb)
+        return np.array([0, 0, proton_pressure]) + hydro_deri[0], [T]
     
     def hydro_integrate(self, DEBUG=False):
         # Initial conditions
@@ -93,7 +112,7 @@ class WhiteDwarf:
         state = np.array([self.rhoc_scaled, self.m0, self.P0]) # [density, mass, temperature, photon pressure]
         #print(f"Integrating outward, Initial state: rhob = {state[0]:.3e}, mbar = {state[1]:.3e}, Temperature: {state[-2]:.3e}, P_photon = {state[3]:.3e}")
         dr = self.dr
-
+        print(state[0])
         R_history = []
         M_history = []
         rho_history = []
@@ -108,7 +127,10 @@ class WhiteDwarf:
             deri, debug = self.get_hydro_deri(rb=r, state=state)
             debug_history.append(debug)
             if hasattr(self, 'P_photon_profile'):
-                state[2] = self.P_photon_profile[np.searchsorted(self.R_profile, r)]
+                try:
+                    state[2] = self.P_photon_profile[np.searchsorted(self.R_profile, r)]
+                except:
+                    state[2] = 0
             else:
                 state[2] = 0
 
@@ -141,19 +163,23 @@ class WhiteDwarf:
         #print(f"Integrating inward, Initial state: rhob = {state[0]:.3e}, mbar = {state[1]:.3e}, Temperature: {state[-2]:.3e}, P_photon = {state[3]:.3e}")
         
         P_photon_history = []
+        dPdr_photon_history = []
 
         while rb > self.r0:
             P_photon_history.append(state[-1])
             deri, debug = self.get_thermo_deri(rb=rb, state=state)
+            dPdr_photon_history.append(deri[2])
 
-            state = rk4(self.get_thermo_deri, dr=-self.dr, rb=rb, state=state)  
+            state =  rk4(self.get_thermo_deri, dr=-self.dr, rb=rb, state=state)  
             state[0] = self.rho_profile[np.searchsorted(self.R_profile, rb)]
             state[1] = self.M_profile[np.searchsorted(self.R_profile, rb)]
 
             if DEBUG:
-                print(f"Radius (km) {self.rbar2r(rb):.3e} | Density (g/cc): {self.rhobar2rho(state[0]):.3e} | Mass (☉): {self.mbar2m(state[1]):.3e} | Proton Pressure dPdr: {deri[-1]:.3e} | dTdr: {deri[-2]:.3e} | Photon Pressure: {state[-1]:.3e} | Temperature: {state[-2]:.3e}")
+                print(f"Radius (km) {self.rbar2r(rb):.3e} | Density (g/cc): {self.rhobar2rho(state[0]):.3e} | Mass (☉): {self.mbar2m(state[1]):.3e} | Proton Pressure dPdr: {deri[2]:.3e} | Photon Pressure: {state[2]:.3e} | Temperature: {debug[0]:.3e}")
 
             rb += -self.dr
+
+        self.dPdr_photon_profile = np.array(dPdr_photon_history)
         self.P_photon_profile = np.array(P_photon_history[::-1])
         self.T_profile = (self.P_photon_profile * (self.rho0) / a) ** 0.25
         self.P0 = self.P_photon_profile[-1]
@@ -169,12 +195,12 @@ class WhiteDwarf:
 
         if type == 'rho':
             #ax.plot(self.rbar2r(self.R_profile), self.rho_interp(self.R_profile), label=label)
-            ax.plot(self.rbar2r(self.R_profile), self.rho_profile, label=label)
+            ax.plot(self.rbar2r(self.R_profile), self.rhobar2rho(self.rho_profile), label=label)
             ax.set_xlabel('Radius (km)')
             ax.set_ylabel(r'Density (g/cm$^3$)')
         elif type == 'M':
             #ax.plot(self.rbar2r(self.R_profile), self.mbar2m(self.M_interp(self.R_profile)), label=label)
-            ax.plot(self.rbar2r(self.R_profile), self.M_profile, label=label)
+            ax.plot(self.rbar2r(self.R_profile), self.mbar2m(self.M_profile), label=label)
             ax.set_xlabel('Radius (km)')
             ax.set_ylabel(r'Mass ($M_\odot$)')
             ax.set_title(f"Total Mass: {self.mbar2m(np.max(self.M_profile)):.3f}"+r'$M_{\odot}$')
@@ -207,14 +233,14 @@ class WhiteDwarf:
         if hasattr(self, 'T_profile'):
             fig, ax = plt.subplots(1, 3, **kwargs)
 
-            self.plot_profile('rho', ax=ax[0])
+            self.plot_profile('rho', ax=ax[0], title='Density')
             self.plot_profile('M', ax=ax[1])
 
-            self.plot_profile('T', ax=ax[2])
+            self.plot_profile('T', ax=ax[2], title='Temperature')
         else:
             fig, ax = plt.subplots(1, 2, **kwargs)
 
-            self.plot_profile('rho', ax=ax[0])
+            self.plot_profile('rho', ax=ax[0], title='Density')
             self.plot_profile('M', ax=ax[1])
         plt.tight_layout()
 
