@@ -101,27 +101,25 @@ class WhiteDwarf:
         else:
             dPdr_photon = 0
 
-        if T <= 0:
-            dTdr = 0
-        else:
-            dTdr = (dPdr_photon * self.rho0 / self.R0) / a / (T ** 3) # c^2 is used to return to cgs unit
-
         dPdr_G = - (G * (m * self.M0) * (rho * self.rho0) / (rb * self.R0)**2) * TOV_term
-        dPdr = dPdr_G - dTdr * out['dpt'][0]
-        
+
+        if T == 0:
+            dPdr = dPdr_G
+        else:
+            dPdr = dPdr_G - (dPdr_photon * self.rho0 * c ** 2 / self.R0) / a / (T ** 3) * out['dpt'][0]
+
         drhodr = dPdr / (out['dpd'][0])
 
         drhodr_bar = drhodr * self.R0 / self.rho0
         dmdr = rb**2 * max(rho, 0) 
         #print(f"radius: {self.rbar2r(rb)} km, rho: {self.rhobar2rho(rho)}")
-        return np.array([drhodr_bar, dmdr, 0]), np.array([dPdr_G, dPdr_photon, P_photon ,dPdr])
+        return np.array([drhodr_bar, dmdr, 0]), np.array([dPdr_G, dPdr_photon ,dPdr, (dPdr_photon * self.rho0 * c ** 2 / self.R0) / a / (T ** 3) * out['dpt'][0]])
     
     def get_thermo_deri(self, state, rb):
         rho, m, P_photon = max(state[0], np.finfo(np.float32).eps), max(state[1], np.finfo(np.float32).eps), max(state[2], np.finfo(np.float32).eps)
         T = (P_photon * self.rho0 * c ** 2 / (4 * sigma / (3 * c))) ** 0.25
         proton_pressure = self.get_proton_pressure(rb, m, rho, T) # proton_pressure < 0
-        hydro_deri = self.get_hydro_deri(state=state, rb=rb)
-        return np.array([0, 0, proton_pressure]) + hydro_deri[0], [T]
+        return np.array([0, 0, proton_pressure]), np.array([T, proton_pressure])
     
     def hydro_integrate(self, DEBUG=False):
         # Initial conditions
@@ -134,7 +132,7 @@ class WhiteDwarf:
         rho_history = []
         debug_history = []
 
-        while state[0] > 1e-3:
+        while state[0] > 1e-5:
 
             R_history.append(r)
             rho_history.append(state[0])
@@ -144,7 +142,11 @@ class WhiteDwarf:
             debug_history.append(debug)
             if hasattr(self, 'P_photon_interp'):
                 try:
-                    state[2] = self.P_photon_interp(r)
+                    if r < self.R_profile[-1]:
+                        # Prevent interpolation error when new hydro cycle integrate out of the old radius
+                        state[2] = self.P_photon_interp(r)
+                    else:
+                        state[2] = self.P_photon_profile[-1]
                 except:
                     state[2] = 0
             else:
@@ -159,7 +161,8 @@ class WhiteDwarf:
                 state[1] = 0
 
             if DEBUG:
-                print(f"dr (km): {self.rbar2r(dr):.3e} | Radius (km) {self.rbar2r(r):.3e} | Density (g/cc): {self.rhobar2rho(state[0]):.3e} | Mass (☉): {self.mbar2m(state[1]):.3e} | TOV: {debug[0]:.3e} | dPdr: {debug[5]:.3e} | drhodr: {deri[0]:.3e} | Proton decay dPdr: {debug[1]:.3e} | Pressure: {debug[2]:.3e}")
+                T = (state[2] * self.rho0 * c ** 2 / (4 * sigma / (3 * c))) ** 0.25
+                print(f"Radius (km) {self.rbar2r(r):.3e} | Density (g/cc): {self.rhobar2rho(state[0]):.3e} | Mass (☉): {self.mbar2m(state[1]):.3e} | Photon Pressure: {state[2]:.3e} | T (K): {T:.3e} | T/rho^2/3: {T/((self.rho0 * state[0] * 1000)**2/3):.3e} | dPdr_G: {debug[0]:.3e} | dPdr: {debug[2]:.3e} | dPdr_T: {debug[-1]:.3e}")
             r += dr
 
         self.R_profile = np.array(R_history)
@@ -175,24 +178,24 @@ class WhiteDwarf:
         L = self.p_decay.luminosity(proton_energy, self.M_profile[-1] * self.M0) 
         rb = self.R_profile[-1]
         T_surface = (L / (4 * np.pi * sigma * (self.R_profile[-1] * self.R0) ** 2)) ** 0.25
-        print(f"Surface T: {T_surface:.3e} K")
+        print(f"Backward Integration: Surface T: {T_surface:.3e} K")
         
         state = np.array([self.rho_profile[-1], self.M_profile[-1], a * (T_surface**4) / (self.rho0 * c ** 2)]) # [density, mass, T, photon pressure]
         
         P_photon_history = []
         dPdr_photon_history = []
 
-        while np.round(rb, decimals=7) >= self.r0:
+        while np.round(rb, decimals=7) >= self.r0: # Prevent round of error
             P_photon_history.append(state[-1])
             deri, debug = self.get_thermo_deri(rb=rb, state=state)
             dPdr_photon_history.append(deri[2])
-
             state =  rk4(self.get_thermo_deri, dr=-self.dr, rb=rb, state=state)  
             state[0] = self.rho_interp(rb)
             state[1] = self.M_interp(rb)
             
             if DEBUG:
-                print(f"Radius (km) {self.rbar2r(rb):.3e} | Density (g/cc): {self.rhobar2rho(state[0]):.3e} | Mass (☉): {self.mbar2m(state[1]):.3e} | Proton Pressure dPdr: {deri[2]:.3e} | Photon Pressure: {state[2]:.3e} | Temperature: {debug[0]:.3e}")
+                T = (state[2] * self.rho0 * c ** 2 / (4 * sigma / (3 * c))) ** 0.25
+                print(f"Radius (km) {self.rbar2r(rb):.3e} | Density (g/cc): {self.rhobar2rho(state[0]):.3e} | Mass (☉): {self.mbar2m(state[1]):.3e} | Photon Pressure: {state[2]:.3e} | T (K): {T:.3e} | T/rho^2/3: {T/((self.rho0 * state[0] * 1000)**2/3):.3e}")
 
             rb += -self.dr
 
@@ -204,6 +207,7 @@ class WhiteDwarf:
         r = self.R_profile[-1]
 
         self.dPdr_photon_interp = interp1d(self.R_profile, self.dPdr_photon_profile, bounds_error=False, fill_value="extrapolate")
+        self.P_photon_interp = interp1d(self.R_profile, self.P_photon_profile, bounds_error=False, fill_value="extrapolate")
         return np.array([r, self.rho_profile[-1], self.M_profile[-1], self.P_photon_profile[-1]])
 
     # Plotting
@@ -222,12 +226,7 @@ class WhiteDwarf:
             ax.set_ylabel(r'Mass ($M_\odot$)')
             ax.set_title(f"Total Mass: {self.mbar2m(np.max(self.M_profile)):.3f}"+r'$M_{\odot}$')
         elif type == 'T':
-            T = (self.P_photon_profile * (self.rho0) / a) ** 0.25
-            try:
-                ax.plot(self.rbar2r(self.R_profile), T, label=label)
-            except:
-                ax.plot(self.rbar2r(self.R_profile[:-1]), T, label=label)
-
+            ax.plot(self.rbar2r(self.R_profile), self.T_profile, label=label)
             ax.set_xlabel('Radius (km)')
             ax.set_ylabel(r'Temperature (K)')
         else:
