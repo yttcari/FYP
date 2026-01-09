@@ -7,7 +7,7 @@ import helmeos
 from scipy.interpolate import interp1d
 
 class WhiteDwarf:
-    def __init__(self, Ye, rhoc_scaled, Z, k, dr=1e-4, r0=1e-4, A=12):
+    def __init__(self, Ye, rhoc_scaled, Z, k, dr=1e-3, r0=1e-4, A=12):
         self.Ye = Ye
         self.p_decay = decay(k=k, Z=Z, Ye=Ye)
         self.k = k
@@ -26,6 +26,8 @@ class WhiteDwarf:
         self.R0 = 7.72e8 * Ye
         self.M0 = 5.67e33 * (Ye ** 2) 
         self.n0 = 5.89e29
+
+        print("Finish setting up white dwarf parameters \n")
 
     def __repr__(self):
         if hasattr(self,'mass') and hasattr(self, 'radius'):
@@ -54,10 +56,11 @@ class WhiteDwarf:
         # all dimensionless
         nn = rho * self.rho0 / mp # nucleon density, cm^-3
         ne = self.Ye * nn # electron/proton density, unit = cm-^3, Yp=Ye
-        proton_pressure = self.p_decay.photon_pressure(E_gamma=proton_energy, r=rb*self.R0, m=m*self.M0, ne=ne, nn=nn, rho=rho*self.rho0, T=T) * self.R0 / (self.rho0)
+        proton_pressure = self.p_decay.photon_pressure(E_gamma=proton_energy, r=rb*self.R0, m=m*self.M0, ne=ne, nn=nn, rho=rho*self.rho0, T=T) * self.R0 / (self.rho0 * c ** 2)
         return proton_pressure
     
-    def TOV(self, rb, rho, P, m):
+    def TOV_bar(self, rb, rho, P, m):
+        # for dimensionless calculation
         if rb <= 1e-6:
             m = (1/3) * rho * (rb**3)
         
@@ -67,43 +70,56 @@ class WhiteDwarf:
         t3 = 1 / (1 - (2 * m * self.Ye * me / mp)/rb)
 
         return t1 * t2 * t3
+    
+    def TOV(self, r, rho, P, m):
+        # note that all things are in cgs here
+        if r <= (1e-6) * self.R0:
+            m = (4 * np.pi / 3) * rho * (r**3)
+        t1 = 1 + P / (rho * c ** 2)
+        t2 = 1 + 4 * np.pi * (r ** 3) * P / (m * c ** 2)
+        t3 = 1 / (1 - 2 * G * m / (r * c ** 2))
+
+        return t1 * t2 * t3
+
 
     def get_hydro_deri(self, state, rb): 
         # state = [rho, m, P_photon]
-        rho, m, P_photon = max(state[0], np.finfo(np.float32).eps), max(state[1], np.finfo(np.float32).eps), max(state[2], np.finfo(np.float32).eps)
-        
-        x = self._x(rho)
-        gamma = self._gamma(x)
-        P_deg = max(self.get_pressure(x=x), 0)
-        T = (P_photon * (self.rho0 * c ** 2) / a) ** 0.25
+        rho, m, P_photon = max(state[0], np.finfo(np.float32).eps), max(state[1], np.finfo(np.float32).eps), max(state[2], 0)
+        T = (P_photon * self.rho0 * c ** 2 / (4 * sigma / (3 * c))) ** 0.25 # unit: Kelvin 
+        # helmeos
+        out = helmeos.eos_DT(rho * self.rho0, T, self.A, self.Z)
 
-        P = P_deg + P_photon
+        # variables calculated in CGS
+        Ptot = out['ptot'][0]
+        TOV_term = self.TOV(r=rb * self.R0, rho=rho * self.rho0, P=Ptot, m=m * self.M0)
 
-        dmdr = rb**2 * max(rho, 0) 
-
-        TOV_term = self.TOV(rb=rb, rho=rho, P=P, m=m)
-        #proton_pressure = self.get_proton_pressure(rb, m, rho, T) # proton_pressure < 0
-        if hasattr(self, 'dPdr_photon_profile'):
+        if hasattr(self, 'dPdr_photon_interp'):
             try:
-                dPdr_photon = self.dPdr_photon_profile[np.searchsorted(self.R_profile, rb)]
+                dPdr_photon = self.dPdr_photon_interp(rb)
             except:
                 dPdr_photon = 0
         else:
             dPdr_photon = 0
 
-        dPdr_G = - (m * rho / rb**2) * TOV_term
-        dPdr = dPdr_G - dPdr_photon
-        
-        drhodr = dPdr / gamma
+        if T <= 0:
+            dTdr = 0
+        else:
+            dTdr = (dPdr_photon * self.rho0 / self.R0) / a / (T ** 3) # c^2 is used to return to cgs unit
 
-        #return np.array([drhodr, dmdr]), [t1, t2, t3, P, pion_photon_pressure * 2 + positron_photon_pressure * 2]
-        return np.array([drhodr, dmdr, 0]), np.array([dPdr_G, dPdr_photon, P, P_deg, P_photon ,dPdr])
+        dPdr_G = - (G * (m * self.M0) * (rho * self.rho0) / (rb * self.R0)**2) * TOV_term
+        dPdr = dPdr_G - dTdr * out['dpt'][0]
+        
+        drhodr = dPdr / (out['dpd'][0])
+
+        drhodr_bar = drhodr * self.R0 / self.rho0
+        dmdr = rb**2 * max(rho, 0) 
+        #print(f"radius: {self.rbar2r(rb)} km, rho: {self.rhobar2rho(rho)}")
+        return np.array([drhodr_bar, dmdr, 0]), np.array([dPdr_G, dPdr_photon, P_photon ,dPdr])
     
     def get_thermo_deri(self, state, rb):
         rho, m, P_photon = max(state[0], np.finfo(np.float32).eps), max(state[1], np.finfo(np.float32).eps), max(state[2], np.finfo(np.float32).eps)
         T = (P_photon * self.rho0 * c ** 2 / (4 * sigma / (3 * c))) ** 0.25
         proton_pressure = self.get_proton_pressure(rb, m, rho, T) # proton_pressure < 0
-        #dTdr = self.p_decay.dTdr(rb*self.R0, T, m*self.M0, rho*self.rho0) * self.R0
         hydro_deri = self.get_hydro_deri(state=state, rb=rb)
         return np.array([0, 0, proton_pressure]) + hydro_deri[0], [T]
     
@@ -161,13 +177,12 @@ class WhiteDwarf:
         T_surface = (L / (4 * np.pi * sigma * (self.R_profile[-1] * self.R0) ** 2)) ** 0.25
         print(f"Surface T: {T_surface:.3e} K")
         
-        state = np.array([self.rho_profile[-1], self.M_profile[-1], a * (T_surface**4) / (self.rho0)]) # [density, mass, T, photon pressure]
+        state = np.array([self.rho_profile[-1], self.M_profile[-1], a * (T_surface**4) / (self.rho0 * c ** 2)]) # [density, mass, T, photon pressure]
         
         P_photon_history = []
         dPdr_photon_history = []
 
         while np.round(rb, decimals=7) >= self.r0:
-            print(rb, state[-1], self.r0)
             P_photon_history.append(state[-1])
             deri, debug = self.get_thermo_deri(rb=rb, state=state)
             dPdr_photon_history.append(deri[2])
@@ -188,7 +203,7 @@ class WhiteDwarf:
 
         r = self.R_profile[-1]
 
-        self.P_photon_interp = interp1d(self.R_profile, self.P_photon_profile, bounds_error=False, fill_value="extrapolate")
+        self.dPdr_photon_interp = interp1d(self.R_profile, self.dPdr_photon_profile, bounds_error=False, fill_value="extrapolate")
         return np.array([r, self.rho_profile[-1], self.M_profile[-1], self.P_photon_profile[-1]])
 
     # Plotting
@@ -202,13 +217,11 @@ class WhiteDwarf:
             ax.set_xlabel('Radius (km)')
             ax.set_ylabel(r'Density (g/cm$^3$)')
         elif type == 'M':
-            #ax.plot(self.rbar2r(self.R_profile), self.mbar2m(self.M_interp(self.R_profile)), label=label)
             ax.plot(self.rbar2r(self.R_profile), self.mbar2m(self.M_profile), label=label)
             ax.set_xlabel('Radius (km)')
             ax.set_ylabel(r'Mass ($M_\odot$)')
             ax.set_title(f"Total Mass: {self.mbar2m(np.max(self.M_profile)):.3f}"+r'$M_{\odot}$')
         elif type == 'T':
-            #ax.plot(self.rbar2r(self.R_profile), (self.T_interp(self.R_profile)), label=label)
             T = (self.P_photon_profile * (self.rho0) / a) ** 0.25
             try:
                 ax.plot(self.rbar2r(self.R_profile), T, label=label)
@@ -217,7 +230,6 @@ class WhiteDwarf:
 
             ax.set_xlabel('Radius (km)')
             ax.set_ylabel(r'Temperature (K)')
-            #ax.set_title(f"Total Mass: {self.mbar2m(self.M_profile[-1]):.3f}"+r'$M_{\odot}$')
         else:
             raise ValueError("Variables does not exist.")
 
