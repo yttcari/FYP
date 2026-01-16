@@ -55,11 +55,8 @@ class decay:
 
     def mean_free_path(self, T, rho):
         if T / ((rho * 1000) ** (2/3)) > 1241:
-            print("Nondeg")
-            self.NOTICE = False
             return self.nondeg_mean_free_path(T, rho)
         else:
-            print("Deg")
             return self.deg_mean_free_path(T, rho)
 
     def dTdr(self, r, T, m, rho):
@@ -73,7 +70,7 @@ class decay:
 
         return - 3 * L / (64 * np.pi * (r ** 2) * l * (T ** 3) * sigma)
 
-    def photon_pressure(self, E_gamma, r, m, ne, nn, T, rho):
+    def photon_pressure(self, E_gamma, r, m, T, rho):
         """
         r: radius [cm]
         m: mass [g]

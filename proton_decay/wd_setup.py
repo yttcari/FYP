@@ -7,7 +7,7 @@ import helmeos
 from scipy.interpolate import interp1d
 
 class WhiteDwarf:
-    def __init__(self, Ye, rhoc_scaled, Z, k, dr=1e-3, r0=1e-4, A=12):
+    def __init__(self, Ye, rhoc_scaled, Z, k, T0=0, dr=1e-3, r0=1e-3, A=12):
         self.Ye = Ye
         self.p_decay = decay(k=k, Z=Z, Ye=Ye)
         self.k = k
@@ -16,7 +16,6 @@ class WhiteDwarf:
         
         self.dr = dr # integration stepsize in dimensionless form
         self.r0 = r0 # initial step size
-        self.P0 = 0
         
         self.rhoc_scaled = rhoc_scaled        
         self.m0 = (1/3) * self.rhoc_scaled * (self.r0 ** 3)
@@ -26,6 +25,8 @@ class WhiteDwarf:
         self.R0 = 7.72e8 * Ye
         self.M0 = 5.67e33 * (Ye ** 2) 
         self.n0 = 5.89e29
+
+        self.P0 = T0 ** 4 * (4 * sigma / (3 * c)) / self.rho0 / c ** 2
 
         print("Finish setting up white dwarf parameters \n")
 
@@ -56,7 +57,7 @@ class WhiteDwarf:
         # all dimensionless
         nn = rho * self.rho0 / mp # nucleon density, cm^-3
         ne = self.Ye * nn # electron/proton density, unit = cm-^3, Yp=Ye
-        proton_pressure = self.p_decay.photon_pressure(E_gamma=proton_energy, r=rb*self.R0, m=m*self.M0, ne=ne, nn=nn, rho=rho*self.rho0, T=T) * self.R0 / (self.rho0 * c ** 2)
+        proton_pressure = self.p_decay.photon_pressure(E_gamma=proton_energy, r=rb*self.R0, m=m*self.M0, rho=rho*self.rho0, T=T) * self.R0 / (self.rho0 * c ** 2)
         return proton_pressure
     
     def TOV_bar(self, rb, rho, P, m):
@@ -84,7 +85,7 @@ class WhiteDwarf:
 
     def get_hydro_deri(self, state, rb): 
         # state = [rho, m, P_photon]
-        rho, m, P_photon = max(state[0], np.finfo(np.float32).eps), max(state[1], np.finfo(np.float32).eps), max(state[2], 0)
+        rho, m, P_photon = max(state[0], np.finfo(np.float32).eps), max(state[1], np.finfo(np.float32).eps), (state[2])
         T = (P_photon * self.rho0 * c ** 2 / (4 * sigma / (3 * c))) ** 0.25 # unit: Kelvin 
         # helmeos
         out = helmeos.eos_DT(rho * self.rho0, T, self.A, self.Z)
@@ -99,27 +100,32 @@ class WhiteDwarf:
             except:
                 dPdr_photon = 0
         else:
-            dPdr_photon = 0
+            if self.P0 != 0:
+                dPdr_photon  = self.get_proton_pressure(rb, m, rho, T) # proton_pressure < 0
+            else:
+                dPdr_photon = 0
 
         dPdr_G = - (G * (m * self.M0) * (rho * self.rho0) / (rb * self.R0)**2) * TOV_term
 
         if T == 0:
             dPdr = dPdr_G
         else:
-            dPdr = dPdr_G - (dPdr_photon * self.rho0 * c ** 2 / self.R0) / a / (T ** 3) * out['dpt'][0]
+            print(dPdr_photon)
+            dPdr_T = (dPdr_photon * self.rho0 * c ** 2 / self.R0) / a / (T ** 3) * out['dpt'][0]
+            dPdr = dPdr_G - dPdr_T
 
         drhodr = dPdr / (out['dpd'][0])
 
         drhodr_bar = drhodr * self.R0 / self.rho0
         dmdr = rb**2 * max(rho, 0) 
-        #print(f"radius: {self.rbar2r(rb)} km, rho: {self.rhobar2rho(rho)}")
-        return np.array([drhodr_bar, dmdr, 0]), np.array([dPdr_G, dPdr_photon ,dPdr, (dPdr_photon * self.rho0 * c ** 2 / self.R0) / a / (T ** 3) * out['dpt'][0]])
+        # return derivative
+        return np.array([drhodr_bar, dmdr, 0]), np.array([dPdr_G, dPdr_photon ,dPdr, (dPdr_photon * self.rho0 * c ** 2 / self.R0) / a / (T ** 3) * out['dpt'][0], out['dpt'][0], drhodr])
     
     def get_thermo_deri(self, state, rb):
         rho, m, P_photon = max(state[0], np.finfo(np.float32).eps), max(state[1], np.finfo(np.float32).eps), max(state[2], np.finfo(np.float32).eps)
         T = (P_photon * self.rho0 * c ** 2 / (4 * sigma / (3 * c))) ** 0.25
-        proton_pressure = self.get_proton_pressure(rb, m, rho, T) # proton_pressure < 0
-        return np.array([0, 0, proton_pressure]), np.array([T, proton_pressure])
+        dPdr_T = self.get_proton_pressure(rb, m, rho, T) # proton_pressure < 0
+        return np.array([0, 0, dPdr_T]), np.array([T, dPdr_T])
     
     def hydro_integrate(self, DEBUG=False):
         # Initial conditions
@@ -133,37 +139,41 @@ class WhiteDwarf:
         debug_history = []
 
         while state[0] > 1e-5:
+            try:
 
-            R_history.append(r)
-            rho_history.append(state[0])
-            M_history.append(state[1])       
-            
-            deri, debug = self.get_hydro_deri(rb=r, state=state)
-            debug_history.append(debug)
-            if hasattr(self, 'P_photon_interp'):
-                try:
-                    if r < self.R_profile[-1]:
-                        # Prevent interpolation error when new hydro cycle integrate out of the old radius
-                        state[2] = self.P_photon_interp(r)
-                    else:
-                        state[2] = self.P_photon_profile[-1]
-                except:
-                    state[2] = 0
-            else:
-                state[2] = 0
+                R_history.append(r)
+                rho_history.append(state[0])
+                M_history.append(state[1])       
+                
+                deri, debug = self.get_hydro_deri(rb=r, state=state)
+                debug_history.append(debug)
+                if hasattr(self, 'P_photon_interp'):
+                    try:
+                        if r < self.R_profile[-1]:
+                            # Prevent interpolation error when new hydro cycle integrate out of the old radius
+                            state[2] = self.P_photon_interp(r)
+                        else:
+                            state[2] = self.P_photon_profile[-1]
+                    except:
+                        state[2] = self.P0
+                else:
+                    state[2] = self.P0
 
-            state = rk4(self.get_hydro_deri, dr=dr, rb=r, state=state)
-            if state[0] < 0:
-                print("WARNING: negative density")
+                state = rk4(self.get_hydro_deri, dr=dr, rb=r, state=state)
+                if state[0] < 0:
+                    print("WARNING: negative density")
+                    break
+                if state[1] < 0:
+                    print("WARNING: negative pressure")
+                    state[1] = 0
+
+                if DEBUG:
+                    T = (state[2] * self.rho0 * c ** 2 / (4 * sigma / (3 * c))) ** 0.25
+                    print(f"Radius (km) {self.rbar2r(r):.3e} | Density (g/cc): {self.rhobar2rho(state[0]):.3e} | Mass (☉): {self.mbar2m(state[1]):.3e} | Photon Pressure: {state[2]:.3e} | T (K): {T:.3e} | T/rho^2/3: {T/((self.rho0 * state[0] / 1000)**2/3):.3e} | dPdr_G: {debug[0]:.3e} | dPdr: {debug[2]:.3e} | dPdr_T: {debug[3]:.3e}")
+                r += dr
+
+            except StopIteration:
                 break
-            if state[1] < 0:
-                print("WARNING: negative pressure")
-                state[1] = 0
-
-            if DEBUG:
-                T = (state[2] * self.rho0 * c ** 2 / (4 * sigma / (3 * c))) ** 0.25
-                print(f"Radius (km) {self.rbar2r(r):.3e} | Density (g/cc): {self.rhobar2rho(state[0]):.3e} | Mass (☉): {self.mbar2m(state[1]):.3e} | Photon Pressure: {state[2]:.3e} | T (K): {T:.3e} | T/rho^2/3: {T/((self.rho0 * state[0] * 1000)**2/3):.3e} | dPdr_G: {debug[0]:.3e} | dPdr: {debug[2]:.3e} | dPdr_T: {debug[-1]:.3e}")
-            r += dr
 
         self.R_profile = np.array(R_history)
         self.M_profile = np.array(M_history)
@@ -195,7 +205,7 @@ class WhiteDwarf:
             
             if DEBUG:
                 T = (state[2] * self.rho0 * c ** 2 / (4 * sigma / (3 * c))) ** 0.25
-                print(f"Radius (km) {self.rbar2r(rb):.3e} | Density (g/cc): {self.rhobar2rho(state[0]):.3e} | Mass (☉): {self.mbar2m(state[1]):.3e} | Photon Pressure: {state[2]:.3e} | T (K): {T:.3e} | T/rho^2/3: {T/((self.rho0 * state[0] * 1000)**2/3):.3e}")
+                print(f"Radius (km) {self.rbar2r(rb):.3e} | Density (g/cc): {self.rhobar2rho(state[0]):.3e} | Mass (☉): {self.mbar2m(state[1]):.3e} | Photon Pressure: {state[2]:.3e} | T (K): {T:.3e} | T/rho^2/3: {T/((self.rho0 * state[0] / 1000)**2/3):.3e}")
 
             rb += -self.dr
 
