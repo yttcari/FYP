@@ -1,16 +1,14 @@
 import numpy as np
 from constants import *
-from decay import decay
 from rk4 import rk4
 import matplotlib.pyplot as plt
 import helmeos
 from scipy.interpolate import interp1d
 
 class WhiteDwarf:
-    def __init__(self, Ye, rhoc_scaled, Z, k, T0=0, dr=1e-3, r0=1e-3, A=12):
+    def __init__(self, Ye, rhoc_scaled, Z, decay_function, T0=0, dr=1e-3, r0=1e-3, A=12):
         self.Ye = Ye
-        self.p_decay = decay(k=k, Z=Z, Ye=Ye)
-        self.k = k
+        self.decay = decay_function
         self.Z = Z # charge of nucleus
         self.A = A # atomic weight in u
         
@@ -36,16 +34,6 @@ class WhiteDwarf:
         else:
             return rf"Ye: {self.Ye}, k: {self.k} s-1, Core density: {self.rhobar2rho(self.rhoc_scaled):.3e} g/cc"
     
-    def _gamma(self, x):
-        return (x ** 2) / (3 * np.sqrt(1 + (x ** 2)))
-    
-    def _x(self, rhob):
-        return (rhob) ** (1/3)
-    
-    def get_pressure(self, x):
-        P = self.Ye * me * (x * np.sqrt(x ** 2 + 1) * (2 * x ** 2 -3) + 3 * np.sinh(x)) / (8 * mp)
-        return P
-    
     def get_thermal_pressure(self, x, T):
         f = (x * np.sqrt(x ** 2 + 1) * (2 * x ** 2 -3) + 3 * np.sinh(x)) 
 
@@ -53,13 +41,93 @@ class WhiteDwarf:
 
         return P * (4 * np.pi ** 2 * (kB * T / (me * c ** 2)) ** 2 * (x * np.sqrt(x**2 + 1)) / (f))
     
+    # =================== Radiation ===================
+
+    def deg_mean_free_path(self, T, rho):
+        # ======= Assumed Carbon, Z=6, A=12, all cgs ===========
+        Z = 6
+        A = 12
+        Ye = Z / A
+        opacity = (56 / (15 * np.sqrt(3))) * (statC_e ** 6 / (c * h * kB ** 2)) * (Z**2 / (mH * A)) / (T ** 2)
+        lambda_R_log = np.log((20 * np.sqrt(3) / 14) * ((c * h * sigma * (kB ** 2) * mH / statC_e**6) * (A / (Z ** 2)))) +  5 * np.log(T) - np.log(rho)
+        a0 = 5.55e-2 * (rho ** (1/3))
+        I1 = 2 * np.pi * np.log(1 + a0 ** 2)
+        mu = mp / (mH * Ye)
+    
+        lambda_T_log = np.log((np.pi/8) * ((h**3 * kB ** 2) / (statC_e ** 4 * me ** 2 * mH)) / (mu * Z) * (T * rho / I1))
+        kappa_eff = opacity / (1 + np.exp(lambda_T_log - lambda_R_log))
+
+        return 1 / (kappa_eff * rho) # cm
+
+    def nondeg_mean_free_path(self, T, rho):
+        THETA1 = 1.0128
+        THETA2 = 1.0823
+
+        Z = 6
+        A = 12
+        Ye = Z / A
+
+        a0 = 8.45e-7 * T / (rho ** (1/3))
+        I1 = 2 * np.pi * np.log(1 + a0 ** 2)
+        mu = mp / (mH * Ye)
+    
+        opacity = (8 * np.pi ** 2 * THETA2 * statC_e ** 6 * h ** 2 * Z ** 2 * rho) / (315 * np.sqrt(3) * THETA1 * c * (2 * np.pi * me) ** (3/2) * mH ** 2 * kB ** (7/2) * A * mu * T ** (7/2))
+        lambdaR = (105 * np.sqrt(3) * THETA1 * (c ** 2) * (2 * np.pi * me) ** (3/2) * sigma * (mH ** 2) * (kB ** (7/2)) * A * mu * T ** (13/2)) / (2 * (np.pi ** 2) * THETA2 * (statC_e ** 6) * (h ** 2) * (Z * rho) ** 2)
+        lambdaC = (2 ** (13/2) * kB ** (7/2) * T ** (5/2)) / (np.pi ** (1/2) * statC_e ** 4 * me ** (1/2) * Z * I1)
+
+        nondeg_kappa_eff = opacity / (1 + lambdaC / lambdaR)
+
+        return 1 / (nondeg_kappa_eff * rho)
+
+    def mean_free_path(self, T, rho):
+        if T / ((rho * 1000) ** (2/3)) > 1241:
+            return self.nondeg_mean_free_path(T, rho)
+        else:
+            return self.deg_mean_free_path(T, rho)
+
+    def dTdr(self, r, T, m, rho):
+        # r: radius of white dwarf [cm]
+        # T: temperature at current r [K]
+        # rho: density [g/cc]
+        # m: enclosed mass of white dwarf [g]
+
+        L = self.decay.luminosity(m=m)
+        l = self.mean_free_path(T, rho)
+
+        return - 3 * L / (64 * np.pi * (r ** 2) * l * (T ** 3) * sigma)
+
+    def photon_pressure(self, r, rho, m, T):
+        """
+        r: radius [cm]
+        m: mass [g]
+        ne: electron number density
+        nn: nucleon number density
+        E_gamma: gamma ray energy [erg]
+        T: temperature [K]
+        rho: density [g/cc]
+
+        return dPdr from proton decay photon pressure
+        """
+        # n = np = ne, but with dimension
+        # but Ye = Yp since no of proton = electron in atom
+        # return dpdr by species
+        
+        L = self.decay.luminosity(m) # erg /s
+        #l = 1 / nsigma # unit = cm
+        l = self.mean_free_path(T, rho)
+        #print(f"{l:.3e}, {oldl:.3e}")
+        #print(f"l: {l:.3e} cm, r: {r/(1000 * 100):.3e} km")
+
+        dudr = 3 * L / (4 * np.pi * l * c * (r ** 2)) # erg cm^-4 s^-1
+        return -dudr/3
+    
     def get_proton_pressure(self, rb, m, rho, T):
-        # all dimensionless
-        nn = rho * self.rho0 / mp # nucleon density, cm^-3
-        ne = self.Ye * nn # electron/proton density, unit = cm-^3, Yp=Ye
-        proton_pressure = self.p_decay.photon_pressure(E_gamma=proton_energy, r=rb*self.R0, m=m*self.M0, rho=rho*self.rho0, T=T) * self.R0 / (self.rho0 * c ** 2)
+        # Input are all dimensionless parameters
+        proton_pressure = self.photon_pressure(r=rb*self.R0, rho=rho*self.rho0, m=m*self.M0, T=T) * self.R0 / (self.rho0 * c ** 2)
         return proton_pressure
     
+    # =================== TOV ===================
+
     def TOV_bar(self, rb, rho, P, m):
         # for dimensionless calculation
         if rb <= 1e-6:
@@ -82,6 +150,7 @@ class WhiteDwarf:
 
         return t1 * t2 * t3
 
+    # =================== Get Derivative ===================
 
     def get_hydro_deri(self, state, rb): 
         # state = [rho, m, P_photon]
@@ -110,7 +179,6 @@ class WhiteDwarf:
         if T == 0:
             dPdr = dPdr_G
         else:
-            print(dPdr_photon)
             dPdr_T = (dPdr_photon * self.rho0 * c ** 2 / self.R0) / a / (T ** 3) * out['dpt'][0]
             dPdr = dPdr_G - dPdr_T
 
@@ -127,6 +195,7 @@ class WhiteDwarf:
         dPdr_T = self.get_proton_pressure(rb, m, rho, T) # proton_pressure < 0
         return np.array([0, 0, dPdr_T]), np.array([T, dPdr_T])
     
+    # =================== Integratino Loop ===================
     def hydro_integrate(self, DEBUG=False):
         # Initial conditions
         r = self.r0
@@ -185,7 +254,7 @@ class WhiteDwarf:
 
     def thermo_integrate(self, DEBUG=False):
         # do the backward integration
-        L = self.p_decay.luminosity(proton_energy, self.M_profile[-1] * self.M0) 
+        L = self.decay.luminosity(m=self.M_profile[-1] * self.M0) 
         rb = self.R_profile[-1]
         T_surface = (L / (4 * np.pi * sigma * (self.R_profile[-1] * self.R0) ** 2)) ** 0.25
         print(f"Backward Integration: Surface T: {T_surface:.3e} K")
@@ -220,7 +289,7 @@ class WhiteDwarf:
         self.P_photon_interp = interp1d(self.R_profile, self.P_photon_profile, bounds_error=False, fill_value="extrapolate")
         return np.array([r, self.rho_profile[-1], self.M_profile[-1], self.P_photon_profile[-1]])
 
-    # Plotting
+    # =================== Plotting ===================
     def plot_profile(self, type, ax=None, xscale=None, yscale=None, title=None, label='', ylim=None):
         if ax is None:
             fig, ax = plt.subplots()
@@ -268,7 +337,7 @@ class WhiteDwarf:
             self.plot_profile('M', ax=ax[1])
         plt.tight_layout()
 
-    # Unit conversion
+    # =================== Unit conversion ===================
     def rbar2r(self, rbar):
         return rbar * self.R0 / (100 * 1000)
 
