@@ -6,9 +6,9 @@ import helmeos
 from scipy.interpolate import interp1d
 
 class WhiteDwarf:
-    def __init__(self, Ye, rhoc_scaled, Z, decay_function, T0=0, dr=1e-3, r0=1e-3, A=12):
+    def __init__(self, Ye, rhoc_scaled, Z, source, T0=0, dr=1e-3, r0=1e-3, A=12):
         self.Ye = Ye
-        self.decay = decay_function
+        self.source = source
         self.Z = Z # charge of nucleus
         self.A = A # atomic weight in u
         
@@ -34,17 +34,10 @@ class WhiteDwarf:
         else:
             return rf"Ye: {self.Ye}, k: {self.k} s-1, Core density: {self.rhobar2rho(self.rhoc_scaled):.3e} g/cc"
     
-    def get_thermal_pressure(self, x, T):
-        f = (x * np.sqrt(x ** 2 + 1) * (2 * x ** 2 -3) + 3 * np.sinh(x)) 
-
-        P = self.get_pressure(x)
-
-        return P * (4 * np.pi ** 2 * (kB * T / (me * c ** 2)) ** 2 * (x * np.sqrt(x**2 + 1)) / (f))
-    
     # =================== Radiation ===================
 
     def deg_mean_free_path(self, T, rho):
-        # ======= Assumed Carbon, Z=6, A=12, all cgs ===========
+        # Assumed Carbon, Z=6, A=12, all cgs 
         Z = 6
         A = 12
         Ye = Z / A
@@ -91,7 +84,7 @@ class WhiteDwarf:
         # rho: density [g/cc]
         # m: enclosed mass of white dwarf [g]
 
-        L = self.decay.luminosity(m=m)
+        L = self.source.luminosity(m=m)
         l = self.mean_free_path(T, rho)
 
         return - 3 * L / (64 * np.pi * (r ** 2) * l * (T ** 3) * sigma)
@@ -112,7 +105,7 @@ class WhiteDwarf:
         # but Ye = Yp since no of proton = electron in atom
         # return dpdr by species
         
-        L = self.decay.luminosity(m) # erg /s
+        L = self.source.luminosity(r, m) # erg /s
         #l = 1 / nsigma # unit = cm
         l = self.mean_free_path(T, rho)
         #print(f"{l:.3e}, {oldl:.3e}")
@@ -127,23 +120,11 @@ class WhiteDwarf:
         return proton_pressure
     
     # =================== TOV ===================
-
-    def TOV_bar(self, rb, rho, P, m):
-        # for dimensionless calculation
-        if rb <= 1e-6:
-            m = (1/3) * rho * (rb**3)
-        
-        #t0 = (m * rho / rb**2)
-        t1 = (1 + P/rho)
-        t2 = (1 + (rb**3 * P)/m)
-        t3 = 1 / (1 - (2 * m * self.Ye * me / mp)/rb)
-
-        return t1 * t2 * t3
     
     def TOV(self, r, rho, P, m):
         # note that all things are in cgs here
         if r <= (1e-6) * self.R0:
-            m = (4 * np.pi / 3) * rho * (r**3)
+            m = (4 * np.pi / 3) * rho * (r**3) + self.source.get_mass()
         t1 = 1 + P / (rho * c ** 2)
         t2 = 1 + 4 * np.pi * (r ** 3) * P / (m * c ** 2)
         t3 = 1 / (1 - 2 * G * m / (r * c ** 2))
@@ -195,7 +176,7 @@ class WhiteDwarf:
         dPdr_T = self.get_proton_pressure(rb, m, rho, T) # proton_pressure < 0
         return np.array([0, 0, dPdr_T]), np.array([T, dPdr_T])
     
-    # =================== Integratino Loop ===================
+    # =================== Integration Loop ===================
     def hydro_integrate(self, DEBUG=False):
         # Initial conditions
         r = self.r0
@@ -254,7 +235,7 @@ class WhiteDwarf:
 
     def thermo_integrate(self, DEBUG=False):
         # do the backward integration
-        L = self.decay.luminosity(m=self.M_profile[-1] * self.M0) 
+        L = self.source.luminosity(r=self.R_profile[-1] * self.r0, m=self.M_profile[-1] * self.M0) 
         rb = self.R_profile[-1]
         T_surface = (L / (4 * np.pi * sigma * (self.R_profile[-1] * self.R0) ** 2)) ** 0.25
         print(f"Backward Integration: Surface T: {T_surface:.3e} K")
