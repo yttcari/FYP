@@ -4,11 +4,16 @@ from rk4 import rk4
 import matplotlib.pyplot as plt
 import helmeos
 from scipy.interpolate import interp1d
+import csv
 
 class WhiteDwarf:
     def __init__(self, Ye, rhoc_scaled, Z, source, T0=0, dr=1e-3, r0=1e-3, A=12):
         self.Ye = Ye
-        self.source = source
+        if source is None:
+            print("Please input energy source!")
+            return
+        else:
+            self.source = source
         self.Z = Z # charge of nucleus
         self.A = A # atomic weight in u
         
@@ -26,6 +31,8 @@ class WhiteDwarf:
 
         self.P0 = T0 ** 4 * (4 * sigma / (3 * c)) / self.rho0 / c ** 2
 
+        self.table = helmeos.HelmTable()
+
         print("Finish setting up white dwarf parameters \n")
 
     def __repr__(self):
@@ -38,16 +45,13 @@ class WhiteDwarf:
 
     def deg_mean_free_path(self, T, rho):
         # Assumed Carbon, Z=6, A=12, all cgs 
-        Z = 6
-        A = 12
-        Ye = Z / A
-        opacity = (56 / (15 * np.sqrt(3))) * (statC_e ** 6 / (c * h * kB ** 2)) * (Z**2 / (mH * A)) / (T ** 2)
-        lambda_R_log = np.log((20 * np.sqrt(3) / 14) * ((c * h * sigma * (kB ** 2) * mH / statC_e**6) * (A / (Z ** 2)))) +  5 * np.log(T) - np.log(rho)
+        opacity = (56 / (15 * np.sqrt(3))) * (statC_e ** 6 / (c * h * kB ** 2)) * (self.Z**2 / (mH * self.A)) / (T ** 2)
+        lambda_R_log = np.log((20 * np.sqrt(3) / 14) * ((c * h * sigma * (kB ** 2) * mH / statC_e**6) * (self.A / (self.Z ** 2)))) +  5 * np.log(T) - np.log(rho)
         a0 = 5.55e-2 * (rho ** (1/3))
         I1 = 2 * np.pi * np.log(1 + a0 ** 2)
-        mu = mp / (mH * Ye)
+        mu = mp / (mH * self.Ye)
     
-        lambda_T_log = np.log((np.pi/8) * ((h**3 * kB ** 2) / (statC_e ** 4 * me ** 2 * mH)) / (mu * Z) * (T * rho / I1))
+        lambda_T_log = np.log((np.pi/8) * ((h**3 * kB ** 2) / (statC_e ** 4 * me ** 2 * mH)) / (mu * self.Z) * (T * rho / I1))
         kappa_eff = opacity / (1 + np.exp(lambda_T_log - lambda_R_log))
 
         return 1 / (kappa_eff * rho) # cm
@@ -56,17 +60,13 @@ class WhiteDwarf:
         THETA1 = 1.0128
         THETA2 = 1.0823
 
-        Z = 6
-        A = 12
-        Ye = Z / A
-
         a0 = 8.45e-7 * T / (rho ** (1/3))
         I1 = 2 * np.pi * np.log(1 + a0 ** 2)
-        mu = mp / (mH * Ye)
+        mu = mp / (mH * self.Ye)
     
-        opacity = (8 * np.pi ** 2 * THETA2 * statC_e ** 6 * h ** 2 * Z ** 2 * rho) / (315 * np.sqrt(3) * THETA1 * c * (2 * np.pi * me) ** (3/2) * mH ** 2 * kB ** (7/2) * A * mu * T ** (7/2))
-        lambdaR = (105 * np.sqrt(3) * THETA1 * (c ** 2) * (2 * np.pi * me) ** (3/2) * sigma * (mH ** 2) * (kB ** (7/2)) * A * mu * T ** (13/2)) / (2 * (np.pi ** 2) * THETA2 * (statC_e ** 6) * (h ** 2) * (Z * rho) ** 2)
-        lambdaC = (2 ** (13/2) * kB ** (7/2) * T ** (5/2)) / (np.pi ** (1/2) * statC_e ** 4 * me ** (1/2) * Z * I1)
+        opacity = (8 * np.pi ** 2 * THETA2 * statC_e ** 6 * h ** 2 * self.Z ** 2 * rho) / (315 * np.sqrt(3) * THETA1 * c * (2 * np.pi * me) ** (3/2) * mH ** 2 * kB ** (7/2) * self.A * mu * T ** (7/2))
+        lambdaR = (105 * np.sqrt(3) * THETA1 * (c ** 2) * (2 * np.pi * me) ** (3/2) * sigma * (mH ** 2) * (kB ** (7/2)) * self.A * mu * T ** (13/2)) / (2 * (np.pi ** 2) * THETA2 * (statC_e ** 6) * (h ** 2) * (self.Z * rho) ** 2)
+        lambdaC = (2 ** (13/2) * kB ** (7/2) * T ** (5/2)) / (np.pi ** (1/2) * statC_e ** 4 * me ** (1/2) * self.Z * I1)
 
         nondeg_kappa_eff = opacity / (1 + lambdaC / lambdaR)
 
@@ -78,38 +78,18 @@ class WhiteDwarf:
         else:
             return self.deg_mean_free_path(T, rho)
 
-    def dTdr(self, r, T, m, rho):
-        # r: radius of white dwarf [cm]
-        # T: temperature at current r [K]
-        # rho: density [g/cc]
-        # m: enclosed mass of white dwarf [g]
-
-        L = self.source.luminosity(m=m)
-        l = self.mean_free_path(T, rho)
-
-        return - 3 * L / (64 * np.pi * (r ** 2) * l * (T ** 3) * sigma)
-
     def photon_pressure(self, r, rho, m, T):
         """
         r: radius [cm]
         m: mass [g]
-        ne: electron number density
-        nn: nucleon number density
-        E_gamma: gamma ray energy [erg]
         T: temperature [K]
         rho: density [g/cc]
 
         return dPdr from proton decay photon pressure
         """
-        # n = np = ne, but with dimension
-        # but Ye = Yp since no of proton = electron in atom
-        # return dpdr by species
         
-        L = self.source.luminosity(r, m) # erg /s
-        #l = 1 / nsigma # unit = cm
-        l = self.mean_free_path(T, rho)
-        #print(f"{l:.3e}, {oldl:.3e}")
-        #print(f"l: {l:.3e} cm, r: {r/(1000 * 100):.3e} km")
+        L = self.source.luminosity(r=r, m=m) # erg /s
+        l = self.mean_free_path(T, rho) # cm
 
         dudr = 3 * L / (4 * np.pi * l * c * (r ** 2)) # erg cm^-4 s^-1
         return -dudr/3
@@ -138,7 +118,7 @@ class WhiteDwarf:
         rho, m, P_photon = max(state[0], np.finfo(np.float32).eps), max(state[1], np.finfo(np.float32).eps), (state[2])
         T = (P_photon * self.rho0 * c ** 2 / (4 * sigma / (3 * c))) ** 0.25 # unit: Kelvin 
         # helmeos
-        out = helmeos.eos_DT(rho * self.rho0, T, self.A, self.Z)
+        out = self.table.eos_DT(rho * self.rho0, T, self.A, self.Z)
 
         # variables calculated in CGS
         Ptot = out['ptot'][0]
@@ -203,7 +183,7 @@ class WhiteDwarf:
                             # Prevent interpolation error when new hydro cycle integrate out of the old radius
                             state[2] = self.P_photon_interp(r)
                         else:
-                            state[2] = self.P_photon_profile[-1]
+                            state[2] = self.P_photon_profile[0]
                     except:
                         state[2] = self.P0
                 else:
@@ -213,9 +193,6 @@ class WhiteDwarf:
                 if state[0] < 0:
                     print("WARNING: negative density")
                     break
-                if state[1] < 0:
-                    print("WARNING: negative pressure")
-                    state[1] = 0
 
                 if DEBUG:
                     T = (state[2] * self.rho0 * c ** 2 / (4 * sigma / (3 * c))) ** 0.25
@@ -235,7 +212,7 @@ class WhiteDwarf:
 
     def thermo_integrate(self, DEBUG=False):
         # do the backward integration
-        L = self.source.luminosity(r=self.R_profile[-1] * self.r0, m=self.M_profile[-1] * self.M0) 
+        L = self.source.luminosity(r=self.R_profile[-1] * self.R0, m=self.M_profile[-1] * self.M0) 
         rb = self.R_profile[-1]
         T_surface = (L / (4 * np.pi * sigma * (self.R_profile[-1] * self.R0) ** 2)) ** 0.25
         print(f"Backward Integration: Surface T: {T_surface:.3e} K")
@@ -259,7 +236,7 @@ class WhiteDwarf:
 
             rb += -self.dr
 
-        self.dPdr_photon_profile = np.array(dPdr_photon_history)
+        self.dPdr_photon_profile = np.array(dPdr_photon_history[::-1])
         self.P_photon_profile = np.array(P_photon_history[::-1])
         self.T_profile = (self.P_photon_profile * (self.rho0 * c ** 2) / a) ** 0.25
         self.P0 = self.P_photon_profile[-1]
@@ -327,3 +304,30 @@ class WhiteDwarf:
     
     def mbar2m(self, mbar):
         return mbar * self.M0 / M_SOLAR
+    
+    # =================== output ===================
+    def export_profiles_to_csv(self, filename="profiles.csv"):
+        """
+        Export all stored profiles into a single CSV file.
+        Each row corresponds to one radial point, with columns for each profile.
+        """
+        # stack arrays column-wise
+        data = np.column_stack([
+            self.rbar2r(self.R_profile),
+            self.rhobar2rho(self.rho_profile),
+            self.mbar2m(self.M_profile),
+            self.T_profile,
+            self.P_photon_profile,
+            self.dPdr_photon_profile
+        ])
+
+        # define headers
+        headers = ["radius", "density", "mass", "temperature", "Pphoton", 'dPdr']
+
+        # write to CSV
+        with open(filename, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            writer.writerows(data)
+
+        print(f"Profiles exported to {filename}")

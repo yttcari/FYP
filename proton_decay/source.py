@@ -28,13 +28,8 @@ class PBH:
     def hawking_T(self):
         return hbar * c ** 3 / (8 * np.pi * G * self.pbhM * kB)
 
-    def luminosity(self, r, m):
-        # input: r in cgs unit
-
-        P = sigma * self.hawking_T() ** 4
-        L = P / (4 * np.pi * r ** 2)
-
-        return L # erg/s
+    def luminosity(self, **kwargs):
+        return hbar * c**6 / (15360 * np.pi * G**2 * self.pbhM**2)
 
 class No_source:
     def __init__(self):
@@ -43,5 +38,5 @@ class No_source:
     def get_mass(self):
         return 0
     
-    def lumionsity(self, **kwargs):
+    def luminosity(self, **kwargs):
         return 0
