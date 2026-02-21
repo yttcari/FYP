@@ -7,13 +7,14 @@ from scipy.interpolate import interp1d
 import csv
 
 class WhiteDwarf:
-    def __init__(self, Ye, rhoc_scaled, Z, source, T0=0, dr=1e-3, r0=1e-3, A=12):
+    def __init__(self, Ye, rhoc_scaled, source,  Z=6, T0=0, dr=1e-3, r0=1e-3, A=12):
         self.Ye = Ye
         if source is None:
             print("Please input energy source!")
             return
         else:
             self.source = source
+
         self.Z = Z # charge of nucleus
         self.A = A # atomic weight in u
         
@@ -88,7 +89,7 @@ class WhiteDwarf:
         return dPdr from proton decay photon pressure
         """
         
-        L = self.source.luminosity(r=r, m=m) # erg /s
+        L = self.source.luminosity(r=r, m=m, rho=rho, T=T) # erg /s
         l = self.mean_free_path(T, rho) # cm
 
         dudr = 3 * L / (4 * np.pi * l * c * (r ** 2)) # erg cm^-4 s^-1
@@ -101,10 +102,10 @@ class WhiteDwarf:
     
     # =================== TOV ===================
     
-    def TOV(self, r, rho, P, m):
+    def TOV(self, r, rho, P, m, T):
         # note that all things are in cgs here
         if r <= (1e-6) * self.R0:
-            m = (4 * np.pi / 3) * rho * (r**3) + self.source.get_mass()
+            m = (4 * np.pi / 3) * rho * (r**3) + self.source.get_mass(rho=rho, T=T)
         t1 = 1 + P / (rho * c ** 2)
         t2 = 1 + 4 * np.pi * (r ** 3) * P / (m * c ** 2)
         t3 = 1 / (1 - 2 * G * m / (r * c ** 2))
@@ -122,7 +123,7 @@ class WhiteDwarf:
 
         # variables calculated in CGS
         Ptot = out['ptot'][0]
-        TOV_term = self.TOV(r=rb * self.R0, rho=rho * self.rho0, P=Ptot, m=m * self.M0)
+        TOV_term = self.TOV(r=rb * self.R0, rho=rho * self.rho0, P=Ptot, m=m * self.M0, T=T)
 
         if hasattr(self, 'dPdr_photon_interp'):
             try:
@@ -148,7 +149,7 @@ class WhiteDwarf:
         drhodr_bar = drhodr * self.R0 / self.rho0
         dmdr = rb**2 * max(rho, 0) 
         # return derivative
-        return np.array([drhodr_bar, dmdr, 0]), np.array([dPdr_G, dPdr_photon ,dPdr, (dPdr_photon * self.rho0 * c ** 2 / self.R0) / a / (T ** 3) * out['dpt'][0], out['dpt'][0], drhodr])
+        return np.array([drhodr_bar, dmdr, 0]), np.array([])#np.array([dPdr_G, dPdr_photon ,dPdr, (dPdr_photon * self.rho0 * c ** 2 / self.R0) / a / (T ** 3) * out['dpt'][0], out['dpt'][0], drhodr])
     
     def get_thermo_deri(self, state, rb):
         rho, m, P_photon = max(state[0], np.finfo(np.float32).eps), max(state[1], np.finfo(np.float32).eps), max(state[2], np.finfo(np.float32).eps)
@@ -170,7 +171,6 @@ class WhiteDwarf:
 
         while state[0] > 1e-5:
             try:
-
                 R_history.append(r)
                 rho_history.append(state[0])
                 M_history.append(state[1])       
@@ -211,13 +211,22 @@ class WhiteDwarf:
         self.M_interp = interp1d(self.R_profile, self.M_profile, bounds_error=False, fill_value="extrapolate")
 
     def thermo_integrate(self, DEBUG=False):
+
+        # damping coefficient
+        alpha = 0.75
+
         # do the backward integration
-        L = self.source.luminosity(r=self.R_profile[-1] * self.R0, m=self.M_profile[-1] * self.M0) 
+        if hasattr(self, 'T_profile'):
+            L = self.source.luminosity(r=self.R_profile[-1] * self.R0, m=self.M_profile[-1] * self.M0, rho=self.rho_profile[-1]*self.rho0, T=self.T_profile[-1])
+            T = (L / (4 * np.pi * sigma * (self.R_profile[-1] * self.R0) ** 2)) ** 0.25 * (1-alpha) + alpha * self.T_profile[-1]
+        else:
+            L = self.source.luminosity(r=self.R_profile[-1] * self.R0, m=self.M_profile[-1] * self.M0, rho=self.rho_profile[-1]*self.rho0, T=0)
+            T = (L / (4 * np.pi * sigma * (self.R_profile[-1] * self.R0) ** 2)) ** 0.25
+
         rb = self.R_profile[-1]
-        T_surface = (L / (4 * np.pi * sigma * (self.R_profile[-1] * self.R0) ** 2)) ** 0.25
-        print(f"Backward Integration: Surface T: {T_surface:.3e} K")
+        print(f"Backward Integration: Surface T: {T:.3e} K")
         
-        state = np.array([self.rho_profile[-1], self.M_profile[-1], a * (T_surface**4) / (self.rho0 * c ** 2)]) # [density, mass, T, photon pressure]
+        state = np.array([self.rho_profile[-1], self.M_profile[-1], a * (T**4) / (self.rho0 * c ** 2)]) # [density, mass, T, photon pressure]
         
         P_photon_history = []
         dPdr_photon_history = []
@@ -245,8 +254,8 @@ class WhiteDwarf:
 
         self.dPdr_photon_interp = interp1d(self.R_profile, self.dPdr_photon_profile, bounds_error=False, fill_value="extrapolate")
         self.P_photon_interp = interp1d(self.R_profile, self.P_photon_profile, bounds_error=False, fill_value="extrapolate")
-        return np.array([r, self.rho_profile[-1], self.M_profile[-1], self.P_photon_profile[-1]])
-
+        return np.array([r, self.rho_profile[-1], self.M_profile[-1], self.T_profile[-1]])
+    
     # =================== Plotting ===================
     def plot_profile(self, type, ax=None, xscale=None, yscale=None, title=None, label='', ylim=None):
         if ax is None:
@@ -306,7 +315,7 @@ class WhiteDwarf:
         return mbar * self.M0 / M_SOLAR
     
     # =================== output ===================
-    def export_profiles_to_csv(self, filename="profiles.csv"):
+    def write_csv(self, filename="profiles.csv"):
         """
         Export all stored profiles into a single CSV file.
         Each row corresponds to one radial point, with columns for each profile.

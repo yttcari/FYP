@@ -27,6 +27,27 @@ class No_source:
     def luminosity(self, **kwargs):
         return 0
 
+class singlePBH:
+    def __init__(self, pbhM):
+        self.pbhM = pbhM
+
+    def get_mass(self):
+        # return mass for TOV calculation
+        return self.pbhM
+
+    def hawking_T(self):
+        return hbar * c ** 3 / (8 * np.pi * G * self.pbhM * kB)
+
+    def luminosity(self, r, m):
+        # input: r in cgs unit
+
+        P = sigma * self.hawking_T() ** 4
+        L = P / (4 * np.pi * r ** 2)
+
+        return L # erg/s
+    def luminosity(self, **kwargs):
+        return hbar * c**6 / (15360 * np.pi * G**2 * self.pbhM**2)
+
 class PBHDistribution:
     def __init__(self, eos, Tmin, Tmax, rho_min, rho_max, atomic_num, mass_num, M_WD=None, alpha=-5/2, f_PBH=0.3, lambda_bondi=1.0, **kwargs):
         """
