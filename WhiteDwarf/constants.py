@@ -1,0 +1,43 @@
+"""
+CGS Unit is used.
+"""
+
+import numpy as np
+
+# General Constant
+me = 9.1093837e-31 * 1000 # g
+mp = 1.67262192e-27 * 1000 # g
+c = 299792458 * 100 # cm/s
+G = 6.67430e-8 # cgs
+statC_e = 4.803e-10
+#E_e = me * (c ** 2) / C_e # m_e c^2 in eV
+r_e =  2.8179403205e-15 * 100 # electron radius in cm
+r_p = 0.877e-15 * 100 # proton radius in cm
+proton_energy = 0.00160218  # erg
+M_SOLAR = 1.98e33 # g
+L_SOLAR = 3.828e33 # erg/s
+h = 6.626e-27 # planck constant in cgs
+hbar = h / (2 * np.pi)
+mH = 1.6735e-24 # mass of hydrogen in g
+kB = 1.38e-16 # boltzmann constant in cgs
+sigma = 5.67e-5 # stefann constant
+a = 4 * sigma / (3 * c)
+km2cm = 1000 * 100
+GEV_TO_ERG = 1.602176634e-3
+
+# Rest mass energy (GeV/c^2)
+rest_mass = {
+    "higgs": 125.2,
+    "W+-": 80.3692,
+    "Z0": 91.188,
+    "electron": 0.511 * 1e-3,
+    "muon": 105.66 * 1e-3,
+    "tau": 1.77693,
+    'up': 2.16 * 1e-3,
+    'down': 4.7 * 1e-3,
+    'charm': 1.273,
+    'top': 172.57,
+    'strange': 93.5 * 1e-3,
+    'bottom': 4.183,
+    'gluons': 0,
+}
