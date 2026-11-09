@@ -354,8 +354,97 @@ void read_gM_table(double **gM_table,double *fM_masses,double *fM_param,struct p
 	return;
 }
 
+double bondi_accretion_rate(double M,struct param *parameters){
+	// This function computes the Bondi-Hoyle-Lyttleton accretion rate of a BH
+	// of mass M moving at relative velocity v_rel through a medium of density
+	// rho_bg and sound speed cs, with accretion eigenvalue lambda_bondi.
+	
+	if(parameters->bondi_accretion == 0){
+		return 0.;
+	}
+	
+	double veff2 = pow(parameters->cs,2.);
+	if(veff2 <= 0.){
+		printf("\n\t [bondi_accretion_rate] : ERROR NON POSITIVE EFFECTIVE VELOCITY !\n");
+		fflush(stdout);
+		exit(0);
+	}
+	
+	return 4.*pi*parameters->lambda_bondi*pow(G,2.)*pow(M,2.)*parameters->rho_bg/pow(veff2,1.5);
+}
+
+double unruh_cross_section(double M,double m_i,double v){
+	if(v <= 0. || v >= 1.){
+		return 0.;
+	}
+	double Rs = 2.*G*M;
+	double p = m_i*v;                 // actual momentum at this velocity
+	double lambda_d = 1./p;
+	double xi = pi*(1. + pow(v,2.))/(pow(v,2.)*sqrt(1.-pow(v,2.)))*Rs/lambda_d;
+	double sigma = 16.*pi*pow(G,2.)*pow(M,2.)*xi/(v*(1.-exp(-xi)));
+	return sigma;
+}
+
+double unruh_accretion_rate(double M,struct param *parameters){
+	// This function computes the Unruh quantum accretion rate of a BH of mass
+	// M, obtained from the thermal average <sigma_U*v> of the Unruh cross
+	// section over a Maxwell distribution of particles of mass m_unruh,
+	// temperature T_unruh and density rho_unruh, integrated with a Simpson rule.
+	
+	if(parameters->unruh_accretion == 0){
+		return 0.;
+	}
+	if(parameters->T_unruh <= 0. || parameters->m_unruh <= 0.){
+		printf("\n\t [unruh_accretion_rate] : ERROR NON POSITIVE MASS OR TEMPERATURE !\n");
+		fflush(stdout);
+		exit(0);
+	}
+	
+	double v_th = sqrt(2.*parameters->T_unruh/parameters->m_unruh);
+	double v_max = 10.*v_th;
+	if(v_max > 0.999){
+		v_max = 0.999;
+	}
+	
+	int nb_steps = 1000;
+	double h = v_max/nb_steps;
+	double norm = pow(parameters->m_unruh/(2.*pi*parameters->T_unruh),1.5)*4.*pi;
+	double integral = 0.;
+	double v;
+	double integrand;
+	for(int i = 0;i<=nb_steps;i++){
+		v = i*h;
+		if(v <= 0. || v >= 1.){
+			integrand = 0.;
+		}
+		else{
+			integrand = norm*pow(v,2.)*exp(-parameters->m_unruh*pow(v,2.)/(2.*parameters->T_unruh))*unruh_cross_section(M,parameters->m_unruh,v)*v;
+		}
+		if(i == 0 || i == nb_steps){
+			integral = integral + integrand;
+		}
+		else if(i%2 == 1){
+			integral = integral + 4.*integrand;
+		}
+		else{
+			integral = integral + 2.*integrand;
+		}
+	}
+	integral = integral*h/3.;
+	
+	return parameters->rho_unruh*integral;
+}
+
+double accretion_rate_M(double M,struct param *parameters){
+	// This function computes the total accretion contribution to dM/dt,
+	// summing the Bondi and Unruh channels.
+	
+	return bondi_accretion_rate(M,parameters) + unruh_accretion_rate(M,parameters);
+}
+
 double loss_rate_M(double M,double param,double **fM_table,double *fM_masses,double *fM_param,int counter_M,int counter_param,struct param *parameters){
-	// This function computes the BH mass loss rate dM/dt by using the f table.
+	// This function computes the BH mass loss rate dM/dt by using the f table,
+	// plus the Bondi and Unruh accretion contributions.
 	
 	double fM;
 	if(parameters->interpolation_method == 0 || parameters->interpolation_method == 2){ // linear interpolation
@@ -369,7 +458,7 @@ double loss_rate_M(double M,double param,double **fM_table,double *fM_masses,dou
 		fflush(stdout);
 		exit(1);
 	}
-	return -fM/pow(M,2.);
+	return -fM/pow(M,2.) + accretion_rate_M(M,parameters);
 }
 
 double loss_rate_param(double M,double param,double **fM_table,double **gM_table,double *fM_masses,double *fM_param,int counter_M,int counter_param,struct param *parameters){
@@ -439,7 +528,7 @@ void evolution_times(double *init_masses,double *init_params,double **evol_times
 			counter_M = parameters->nb_fM_masses-1; // the BH mass is decreasing
 			counter_param = parameters->nb_fM_param-1; // the BH parameter is decreasing (spin)
 			counter = 0;
-			while(counter < parameters->limit-1 && life_mass > limiting_mass){ // recursion limit, evaporation until Planck mass
+			while(counter < parameters->limit-1 && life_mass > limiting_mass && life_mass <= parameters->Mmax_fM){ // recursion limit, evaporation until Planck mass, or accretion until the table limit
 				counter_M = parameters->nb_fM_masses-1;
 				counter_param = parameters->nb_fM_param-1;
 				while(counter_M > 0 && life_mass < fM_masses[counter_M]){ // we find the closest tabulated value
@@ -567,7 +656,7 @@ void life_evolution(double ***life_masses,double ***life_params,double *life_tim
 #endif
 		for(int i = 0;i<parameters->BH_number;i++){
 			for(int j = 0;j<parameters->param_number;j++){
-				if(life_masses[i][j][current_ind] > limiting_mass){ // We continue to evolve this BH
+				if(life_masses[i][j][current_ind] > limiting_mass && life_masses[i][j][current_ind] <= parameters->Mmax_fM){ // We continue to evolve this BH
 					counters_M[i][j] = parameters->nb_fM_masses-1;
 					counters_param[i][j] = parameters->nb_fM_param-1;
 					while(counters_M[i][j] > 0 && life_masses[i][j][current_ind] < fM_masses[counters_M[i][j]]){ // we find the closest tabulated value

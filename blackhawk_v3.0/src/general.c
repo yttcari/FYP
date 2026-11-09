@@ -397,6 +397,66 @@ int read_params(struct param *parameters, char name[],int session){
 			fscanf(param_file,"%s",dummy);
 			fscanf(param_file,"%lf",&(parameters->dof_DM));
 		}
+		else if(!strcasecmp(dummy,"bondi_accretion"))
+		{
+			fscanf(param_file,"%s",dummy);
+			fscanf(param_file,"%i",&(parameters->bondi_accretion));
+			
+			if(parameters->bondi_accretion != 0 && parameters->bondi_accretion != 1)
+			{
+				printf("\n\t [read_params] : ERROR WRONG BONDI ACCRETION CHOICE !\n");
+				fflush(stdout);
+				fclose(param_file);
+				return 0;
+			}
+		}
+		else if(!strcasecmp(dummy,"cs"))
+		{
+			fscanf(param_file,"%s",dummy);
+			fscanf(param_file,"%lf",&(parameters->cs)); 
+			parameters->cs = parameters->cs / light_speed; // sound speed of the background medium, in units of c
+		}
+		else if(!strcasecmp(dummy,"lambda_bondi"))
+		{
+			fscanf(param_file,"%s",dummy);
+			fscanf(param_file,"%lf",&(parameters->lambda_bondi));
+		}
+		else if(!strcasecmp(dummy,"rho_bg"))
+		{
+			fscanf(param_file,"%s",dummy);
+			fscanf(param_file,"%lf",&(parameters->rho_bg));
+			parameters->rho_bg = parameters->rho_bg*mass_conversion/pow(leng_conversion,3.); // conversion from CGS (g/cm^3) to GeV^4
+		}
+		else if(!strcasecmp(dummy,"unruh_accretion"))
+		{
+			fscanf(param_file,"%s",dummy);
+			fscanf(param_file,"%i",&(parameters->unruh_accretion));
+			
+			if(parameters->unruh_accretion != 0 && parameters->unruh_accretion != 1)
+			{
+				printf("\n\t [read_params] : ERROR WRONG UNRUH ACCRETION CHOICE !\n");
+				fflush(stdout);
+				fclose(param_file);
+				return 0;
+			}
+		}
+		else if(!strcasecmp(dummy,"T_unruh"))
+		{
+			fscanf(param_file,"%s",dummy);
+			fscanf(param_file,"%lf",&(parameters->T_unruh)); 
+			parameters->T_unruh = parameters->T_unruh * temp_conversion;// background temperature, in GeV
+		}
+		else if(!strcasecmp(dummy,"m_unruh"))
+		{
+			fscanf(param_file,"%s",dummy);
+			fscanf(param_file,"%lf",&(parameters->m_unruh)); // background particle mass, in GeV
+		}
+		else if(!strcasecmp(dummy,"rho_unruh"))
+		{
+			fscanf(param_file,"%s",dummy);
+			fscanf(param_file,"%lf",&(parameters->rho_unruh));
+			parameters->rho_unruh = parameters->rho_unruh*mass_conversion/pow(leng_conversion,3.); // conversion from CGS (g/cm^3) to GeV^4
+		}
 		else if(!strcasecmp(dummy,"primary_only"))
 		{
 			fscanf(param_file,"%s",dummy);
@@ -714,6 +774,45 @@ int read_params(struct param *parameters, char name[],int session){
 			return 0;
 		}
 	}
+	
+	if(parameters->bondi_accretion)
+	{
+		if(parameters->lambda_bondi <= 0.){
+			printf("\n\t [read_params] : ERROR WRONG BONDI ACCRETION EIGENVALUE !\n");
+			fflush(stdout);
+			return 0;
+		}
+		if(parameters->cs <= 0. || parameters->cs >= 1.){
+			printf("\n\t [read_params] : ERROR WRONG BONDI ACCRETION SOUND SPEED !\n");
+			fflush(stdout);
+			return 0;
+		}
+		if(parameters->rho_bg < 0.){
+			printf("\n\t [read_params] : ERROR WRONG BONDI ACCRETION BACKGROUND DENSITY !\n");
+			fflush(stdout);
+			return 0;
+		}
+	}
+	
+	if(parameters->unruh_accretion)
+	{
+		if(parameters->m_unruh <= 0.){
+			printf("\n\t [read_params] : ERROR WRONG UNRUH ACCRETION BACKGROUND MASS !\n");
+			fflush(stdout);
+			return 0;
+		}
+		if(parameters->T_unruh <= 0.){
+			printf("\n\t [read_params] : ERROR WRONG UNRUH ACCRETION BACKGROUND TEMPERATURE !\n");
+			fflush(stdout);
+			return 0;
+		}
+		if(parameters->rho_unruh < 0.){
+			printf("\n\t [read_params] : ERROR WRONG UNRUH ACCRETION BACKGROUND DENSITY !\n");
+			fflush(stdout);
+			return 0;
+		}
+	}
+	
 	if(session == 0)
 	{
 		if(parameters->Mmin < parameters->Mmin_fM || parameters->Mmax > parameters->Mmax_fM)

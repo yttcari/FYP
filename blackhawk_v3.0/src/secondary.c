@@ -46,7 +46,7 @@ void read_hadronization_tables(double ****tables,double *initial_energies,double
 	char **table_names = (char **)malloc(parameters->nb_fin_part*sizeof(char *)); // contains the names of the table files
 
 	for(int i = 0;i<parameters->nb_fin_part;i++){
-		table_names[i] = (char *)malloc(100*sizeof(char));
+		table_names[i] = (char *)malloc(128*sizeof(char));
 	}
 	switch(parameters->hadronization_choice){
 		case 0:{ // PYTHIA tables
