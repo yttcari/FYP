@@ -3,6 +3,7 @@ Parallel running parameter sweeping in white dwarf
 
 CLEAN_BAD: option to clean broken WD
 PBH_list, rho_list, N_list: list of PBH, core density, and N_PBH to be run
+SOURCE_TYPE: 'single'/'uniform'/'gaussian'/'none'
 """
 
 import os
@@ -26,11 +27,38 @@ PBH_list = [5e14]
 rho_list = np.logspace(-1, 3, 17)   
 N_list = np.logspace(5, 15, 21)     
 
+# Source options
+SOURCE_TYPE = 'gaussian'    # 'single'/'uniform'/'gaussian'/'none'
+PBH_R = 1e8               # cm, uniform: radius of the PBH ball
+PBH_SIGMA = 1e8           # cm, gaussian: width of the PBH cloud 
+
 # options
 MAX_ITER = 20 # max iteration per WD
 EPSILON = 5e-4 # epsilon to stop computation
 DEBUG = False # print debug message
-DR = 1e-6 # step size
+DR = 1e-5 # step size
+
+
+def make_source(PBH_M, N):
+    if SOURCE_TYPE == 'single':
+        return source.singlePBH(PBH_M, N=N)
+    if SOURCE_TYPE == 'uniform':
+        return source.uniformPBH(PBH_M, N=N, R=PBH_R)
+    if SOURCE_TYPE == 'gaussian':
+        return source.gaussianPBH(PBH_M, N=N, sigma=PBH_SIGMA)
+    if SOURCE_TYPE == 'none':
+        return source.No_source()
+    raise ValueError(f"Unknown SOURCE_TYPE: {SOURCE_TYPE}")
+
+
+def width_tag():
+    # keeps runs with different R / sigma from overwriting each other
+    if SOURCE_TYPE == 'uniform':
+        return f'_R{PBH_R:.0e}'
+    if SOURCE_TYPE == 'gaussian':
+        return f'_s{PBH_SIGMA:.0e}'
+    return ''
+
 
 def classify(path):
     try:
@@ -93,9 +121,8 @@ def has_spectra(PBH_M):
 def run_one(job):
     # one (PBH mass, N, rho) point; runs in its own process
     PBH_M, N, rho = job
-    PBH = source.singlePBH(PBH_M, N=N)
-    #PBH = source.No_source()
-    new_dir = os.path.join('result', PBH.source_type, f'PBH_M{PBH_M:.1e}/N{N:.1e}/')
+    PBH = make_source(PBH_M, N)
+    new_dir = os.path.join('result', PBH.source_type + width_tag(), f'PBH_M{PBH_M:.1e}/N{N:.1e}/')
     os.makedirs(new_dir, exist_ok=True)
     output_path = os.path.join(new_dir, f'rho0{rho:.3e}.csv')
     if os.path.exists(output_path):
@@ -117,7 +144,7 @@ if __name__ == "__main__":
 
     # delete stuck/runaway results for smaller timestep
     if CLEAN_BAD:
-        source_type = source.singlePBH(PBH_list[0], N=N_list[0]).source_type
+        source_type = make_source(PBH_list[0], N_list[0]).source_type + width_tag()
         clean_results(os.path.join("result", source_type))
 
     missing = [M for M in PBH_list if not has_spectra(M)]

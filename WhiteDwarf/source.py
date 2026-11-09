@@ -131,11 +131,12 @@ class uniformPBH(BasePBH):
 class gaussianPBH(BasePBH):
 	source_type = 'GaussianPBH'
 
-	def __init__(self, pbhM, N0, sigma, **kwargs):
+	def __init__(self, pbhM, N, sigma, **kwargs):
+		# N: total number of PBHs (integrated to r -> infinity)
 		self.pbhM = pbhM
-		self.N0 = N0
+		self.N = N
 		self.sigma = sigma
-		self.N = 4 * np.pi * self.N0 * self.sigma**3 * np.sqrt(np.pi / 2)
+		self.N0 = N / (4 * np.pi * self.sigma**3 * np.sqrt(np.pi / 2))
 
 	def _N_enclosed(self, r):
 		r = np.asarray(r)
