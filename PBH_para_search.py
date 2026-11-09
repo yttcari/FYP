@@ -25,6 +25,13 @@ MIN_STEPS = 100           # fewer radial points than this = broken integration, 
 PBH_list = [5e14]
 rho_list = np.logspace(-1, 3, 17)   
 N_list = np.logspace(5, 15, 21)     
+
+# options
+MAX_ITER = 20 # max iteration per WD
+EPSILON = 5e-4 # epsilon to stop computation
+DEBUG = False # print debug message
+DR = 1e-6 # step size
+
 def classify(path):
     try:
         df = pd.read_csv(path)
@@ -51,7 +58,7 @@ def clean_results(result_dir):
         f.unlink()
 
 
-def iterate(rhoc_scaled, source_function, max_iter=20, epsilon=5e-4, DEBUG=False, dr=1e-5, **kwargs):
+def iterate(rhoc_scaled, source_function, max_iter=MAX_ITER, epsilon=EPSILON, DEBUG=DEBUG, dr=DR, **kwargs):
     wd = WhiteDwarf(Ye=0.5, rhoc_scaled=rhoc_scaled, source=source_function,Z=6, dr=dr, T0=0, **kwargs)
 
     wd.hydro_integrate(DEBUG=DEBUG)
@@ -96,7 +103,7 @@ def run_one(job):
         return
     print(f"Working on rho: {rho}, M: {PBH_M}, N: {N:.1e}")
     try:
-        wd = iterate(rho, PBH, DEBUG=False, dr=1e-5, epsilon=1e-4, max_iter=20)
+        wd = iterate(rho, PBH, DEBUG=False,)
     except Exception as e:
         print(f"ERROR at N={N:.1e}, rho={rho:.3e}: {e}")
         return
