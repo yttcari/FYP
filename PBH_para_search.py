@@ -1,5 +1,14 @@
+"""
+Parallel running parameter sweeping in white dwarf
+
+CLEAN_BAD: option to clean broken WD
+PBH_list, rho_list, N_list: list of PBH, core density, and N_PBH to be run
+"""
+
 import os
 os.environ["OMP_NUM_THREADS"] = "1"  # one core per process
+from pathlib import Path
+
 from WhiteDwarf.wd_setup import WhiteDwarf
 import WhiteDwarf.source as source
 import numpy as np
@@ -7,30 +16,55 @@ import pandas as pd
 from WhiteDwarf.constants import *
 from multiprocessing import Pool
 
+# clean up bad white dwraf
+CLEAN_BAD = True          # option to delete stuck/runaway WD
+M_CH, R_MAX = 3, 1e5      # Msun, km  (matching convergence.py)
+MIN_STEPS = 100           # fewer radial points than this = broken integration, not a star
+
+# Parameters to be swept
+PBH_list = [5e14]
+rho_list = np.logspace(-1, 3, 17)   
+N_list = np.logspace(5, 15, 21)     
+def classify(path):
+    try:
+        df = pd.read_csv(path)
+        last = df.iloc[-1]
+        if len(df) <= 1 or not np.isfinite(last[["radius", "mass"]]).all():
+            return "stuck"
+        if last["mass"] > M_CH or last["radius"] > R_MAX:
+            return "runaway"
+        return "converged"
+    except Exception:                       # empty / corrupted file
+        return "stuck"
+
+
+def clean_results(result_dir):
+    result_dir = Path(result_dir)
+    if not result_dir.exists():
+        return
+    files = sorted(result_dir.glob("PBH_M*/N*/rho0*.csv"))
+    bad = [(f, s) for f in files if (s := classify(f)) != "converged"]
+    print(f"Checked {len(files)} files in {result_dir}: "
+          f"{len(files) - len(bad)} converged, {len(bad)} to delete")
+    for f, status in bad:
+        print(f"  deleting [{status}] {f}")
+        f.unlink()
+
+
 def iterate(rhoc_scaled, source_function, max_iter=20, epsilon=5e-4, DEBUG=False, dr=1e-5, **kwargs):
-    wd = WhiteDwarf(Ye=0.5, rhoc_scaled=rhoc_scaled, source=source_function, Z=6, dr=dr, **kwargs)
+    wd = WhiteDwarf(Ye=0.5, rhoc_scaled=rhoc_scaled, source=source_function,Z=6, dr=dr, T0=0, **kwargs)
 
-    # ---- no source: cold star, structure only ----
-
-    wd = WhiteDwarf(Ye=0.5, rhoc_scaled=rhoc_scaled, source=source_function,
-                    Z=6, dr=dr, T0=1e4, **kwargs)      # 1e4 K floor, effectively cold
-    if source.source_type == "No_source":    
-        wd.hydro_integrate(DEBUG=DEBUG)
-        n = len(wd.R_profile)
-        wd.T_profile = np.full(n, 1e4)
-        wd.P_photon_profile = np.full(n, wd.P0)
-        wd.dPdr_photon_profile = np.zeros(n)
-        print("No source: hydro only, thermal evolution skipped.")
-        return wd
-    
-    # ---- with source: hydro <-> thermo iteration ----
     wd.hydro_integrate(DEBUG=DEBUG)
+    if len(wd.R_profile) < MIN_STEPS:
+        raise RuntimeError(f"hydro stopped after {len(wd.R_profile)} steps")
     para0 = wd.thermo_integrate(DEBUG=DEBUG)
     print("Finished initial setup.\n")
 
     for n in range(max_iter):
         print(f"Round {n}: hydro")
         wd.hydro_integrate(DEBUG=DEBUG)
+        if len(wd.R_profile) < MIN_STEPS:
+            raise RuntimeError(f"round {n}: hydro stopped after {len(wd.R_profile)} steps")
         print(f"Round {n}: thermal")
         para = wd.thermo_integrate(DEBUG=DEBUG)
 
@@ -41,7 +75,7 @@ def iterate(rhoc_scaled, source_function, max_iter=20, epsilon=5e-4, DEBUG=False
         print(f"Finished iter: {n}, epsilon: {eps:.3e} CONTINUE")
         para0 = para
 
-    print("===== DOESN'T CONVERGE =====")"""
+    print("===== DOESN'T CONVERGE =====")
 
 
 def has_spectra(PBH_M):
@@ -52,8 +86,8 @@ def has_spectra(PBH_M):
 def run_one(job):
     # one (PBH mass, N, rho) point; runs in its own process
     PBH_M, N, rho = job
-    #PBH = source.singlePBH(PBH_M, N=N)
-    PBH = source.No_source()
+    PBH = source.singlePBH(PBH_M, N=N)
+    #PBH = source.No_source()
     new_dir = os.path.join('result', PBH.source_type, f'PBH_M{PBH_M:.1e}/N{N:.1e}/')
     os.makedirs(new_dir, exist_ok=True)
     output_path = os.path.join(new_dir, f'rho0{rho:.3e}.csv')
@@ -62,20 +96,22 @@ def run_one(job):
         return
     print(f"Working on rho: {rho}, M: {PBH_M}, N: {N:.1e}")
     try:
-        wd = iterate(rho, PBH, DEBUG=False, dr=1e-3, epsilon=1e-4, max_iter=20)
+        wd = iterate(rho, PBH, DEBUG=False, dr=1e-5, epsilon=1e-4, max_iter=20)
     except Exception as e:
         print(f"ERROR at N={N:.1e}, rho={rho:.3e}: {e}")
         return
     if wd is not None:
-        print(f"White dwarf with PBH: {wd.rbar2r(wd.R_profile[-1]):.3e} km, {wd.mbar2m(wd.M_profile[-1]):.3e} Msolar")
+        R_km, M_sun = wd.rbar2r(wd.R_profile[-1]), wd.mbar2m(wd.M_profile[-1])
+        print(f"White dwarf with PBH: {R_km:.3e} km, {M_sun:.3e} Msolar")
         wd.write_csv(output_path)
 
 
 if __name__ == "__main__":
-    # PBH masses need BlackHawk spectra in folder M{mass:.0e}, so use ONE significant digit
-    PBH_list = [5e14]
-    rho_list = np.logspace(-1, 3, 17)   # 4 points per decade (was 5 points total)
-    N_list = np.logspace(5, 15, 21)     # 2 points per decade (was 10 points total)
+
+    # delete stuck/runaway results for smaller timestep
+    if CLEAN_BAD:
+        source_type = source.singlePBH(PBH_list[0], N=N_list[0]).source_type
+        clean_results(os.path.join("result", source_type))
 
     missing = [M for M in PBH_list if not has_spectra(M)]
     if missing:
