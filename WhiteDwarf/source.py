@@ -22,9 +22,9 @@ class proton_decay:
 
 class No_source:
 	def __init__(self, **kwargs):
-		self.source_type = 'No_source'
+		self.source_type = 'No source'
 
-	def get_mass(self, **kwargs):
+	def get_mass(self):
 		return 0
 	
 	def luminosity(self, **kwargs):
@@ -35,7 +35,7 @@ class BasePBH:
 
 	def get_spectra(self, spectra_type):
 		mass = f"{self.pbhM:.0e}"
-		spectra_dir = f"/home/yttsang/PBH_WD/blackhawk_v2.3/results/Hazma/M{mass}/instantaneous_{spectra_type}_spectra.txt"
+		spectra_dir = f"./blackhawk_v2.3/results/Hazma/M{mass}/instantaneous_{spectra_type}_spectra.txt"
 
 		if not os.path.exists(spectra_dir):
 			print(f"The entered PBH mass has no {spectra_type} spectra computed. Please compute it using BlackHawk before you run this. TERMINATE")
@@ -91,7 +91,8 @@ class BasePBH:
 		E_dep_positron = E + rest_mass['electron'] + E_el_int
 		L += np.trapezoid(dN_dE_e * E_dep_positron, E)
 
-		return L * GEV_TO_ERG * self.N
+		N = self._N_enclosed(kwargs['r']) if hasattr(self, '_N_enclosed') else self.N
+		return L * GEV_TO_ERG * N
 
 	def get_mass(self, r=None):
 		raise NotImplementedError
@@ -108,7 +109,7 @@ class singlePBH(BasePBH):
 	def hawking_T(self):
 		return hbar * c ** 3 / (8 * np.pi * G * self.pbhM * kB)
 
-	def get_mass(self, **kwargs):
+	def get_mass(self):
 		return self.pbhM * self.N
 
 
@@ -119,6 +120,9 @@ class uniformPBH(BasePBH):
 		self.pbhM = pbhM
 		self.N = N
 		self.R = R
+
+	def _N_enclosed(self, r):
+		return self.N * min(r / self.R, 1) ** 3
 
 	def get_mass(self, r):
 		return self.pbhM * self.N * min(r / self.R, 1) ** 3
